@@ -8,11 +8,13 @@ struct MenuBarLabel: View {
     var body: some View {
         let config = store.config
         if config.menuBarShows == .todayWeek {
-            // Today + week side by side, each clearly labeled by its letter.
+            // Today + week side by side: letter badge + percent + mini progress bar.
             let today = ProgressEngine.snapshot(.today, now: ticker.now, config: config)
             let week = ProgressEngine.snapshot(.week, now: ticker.now, config: config)
-            Text("T \(ProgressEngine.percentText(today.fraction)) · W \(ProgressEngine.percentText(week.fraction))")
-                .monospacedDigit()
+            Image(nsImage: MenuBarBadges.image(segments: [
+                ("T", today.fraction),
+                ("W", week.fraction),
+            ]))
         } else {
             let metric = config.menuBarShows.metric ?? .week
             let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
@@ -26,6 +28,83 @@ struct MenuBarLabel: View {
                 Image(nsImage: MenuBarRing.image(fraction: snapshot.fraction ?? 0, letter: metric.shortLetter))
             }
         }
+    }
+}
+
+enum MenuBarBadges {
+    /// Template image: one segment per metric — a rounded "keycap" badge with
+    /// the letter punched out, the percent beside it, and a slim progress bar
+    /// underneath. Adapts to light/dark menu bars automatically.
+    static func image(segments: [(letter: String, fraction: Double?)]) -> NSImage {
+        let height: CGFloat = 18
+        let badgeSide: CGFloat = 13
+        let badgeGap: CGFloat = 5
+        let segmentGap: CGFloat = 11
+        let barHeight: CGFloat = 2.5
+        let barGap: CGFloat = 2
+
+        let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
+        let letterFont = NSFont.systemFont(ofSize: 8, weight: .heavy)
+
+        let texts = segments.map { segment in
+            NSAttributedString(string: ProgressEngine.percentText(segment.fraction), attributes: [
+                .font: percentFont,
+                .foregroundColor: NSColor.black.withAlphaComponent(0.95),
+            ])
+        }
+        // Bar spans the percent text; keep a floor so tiny texts still read as a bar.
+        let columnWidths = texts.map { max($0.size().width, 20) }
+        let width = columnWidths.reduce(0, +)
+            + CGFloat(segments.count) * (badgeSide + badgeGap)
+            + CGFloat(max(segments.count - 1, 0)) * segmentGap
+
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            var x: CGFloat = 0
+            for (index, segment) in segments.enumerated() {
+                let text = texts[index]
+                let columnWidth = columnWidths[index]
+                let textSize = text.size()
+
+                // Badge: filled rounded square, letter knocked out of it.
+                let badgeRect = NSRect(x: x, y: (height - badgeSide) / 2, width: badgeSide, height: badgeSide)
+                NSColor.black.withAlphaComponent(0.88).setFill()
+                NSBezierPath(roundedRect: badgeRect, xRadius: 3.5, yRadius: 3.5).fill()
+                let letter = NSAttributedString(string: segment.letter, attributes: [
+                    .font: letterFont,
+                    .foregroundColor: NSColor.black,
+                ])
+                let letterSize = letter.size()
+                NSGraphicsContext.current?.cgContext.setBlendMode(.destinationOut)
+                letter.draw(at: NSPoint(
+                    x: badgeRect.midX - letterSize.width / 2,
+                    y: badgeRect.midY - letterSize.height / 2
+                ))
+                NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
+                x += badgeSide + badgeGap
+
+                // Percent above its mini progress bar, both vertically centered.
+                let blockHeight = textSize.height + barGap + barHeight
+                let blockBottom = (height - blockHeight) / 2
+                text.draw(at: NSPoint(x: x, y: blockBottom + barHeight + barGap))
+
+                let trackRect = NSRect(x: x, y: blockBottom, width: columnWidth, height: barHeight)
+                NSColor.black.withAlphaComponent(0.25).setFill()
+                NSBezierPath(roundedRect: trackRect, xRadius: barHeight / 2, yRadius: barHeight / 2).fill()
+                let clamped = min(max(segment.fraction ?? 0, 0), 1)
+                if clamped > 0.001 {
+                    let fillRect = NSRect(
+                        x: x, y: blockBottom,
+                        width: max(columnWidth * clamped, barHeight), height: barHeight
+                    )
+                    NSColor.black.withAlphaComponent(0.9).setFill()
+                    NSBezierPath(roundedRect: fillRect, xRadius: barHeight / 2, yRadius: barHeight / 2).fill()
+                }
+                x += columnWidth + segmentGap
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 }
 
