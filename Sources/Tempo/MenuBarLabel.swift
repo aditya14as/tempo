@@ -8,19 +8,11 @@ struct MenuBarLabel: View {
     var body: some View {
         let config = store.config
         if config.menuBarShows == .todayWeek {
-            // Today + week side by side, each clearly labeled.
+            // Today + week side by side, each clearly labeled by its letter.
             let today = ProgressEngine.snapshot(.today, now: ticker.now, config: config)
             let week = ProgressEngine.snapshot(.week, now: ticker.now, config: config)
-            switch config.menuBarStyle {
-            case .text:
-                Text("T \(ProgressEngine.percentText(today.fraction))  W \(ProgressEngine.percentText(week.fraction))")
-                    .monospacedDigit()
-            case .icon, .ring:
-                // Ring = today, text = week.
-                Image(nsImage: MenuBarRing.image(fraction: today.fraction ?? 0))
-                Text("W \(ProgressEngine.percentText(week.fraction))")
-                    .monospacedDigit()
-            }
+            Text("T \(ProgressEngine.percentText(today.fraction)) · W \(ProgressEngine.percentText(week.fraction))")
+                .monospacedDigit()
         } else {
             let metric = config.menuBarShows.metric ?? .week
             let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
