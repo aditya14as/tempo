@@ -58,23 +58,24 @@ struct SettingsView: View {
 
                     section("Rows") {
                         ForEach(Metric.allCases) { metric in
-                            HStack {
+                            VStack(alignment: .leading, spacing: 6) {
                                 Toggle(isOn: rowBinding(metric, \.visible)) {
                                     Text(metric.title)
                                         .font(.system(.subheadline, design: .rounded))
                                 }
                                 .toggleStyle(.switch)
                                 .controlSize(.mini)
-                                Spacer()
                                 Picker("", selection: rowBinding(metric, \.style)) {
                                     ForEach(RowStyle.allCases) { style in
                                         Text(style.label).tag(style)
                                     }
                                 }
                                 .pickerStyle(.segmented)
-                                .frame(width: 150)
+                                .controlSize(.small)
+                                .labelsHidden()
                                 .disabled(!store.config.row(metric).visible)
                             }
+                            .padding(.bottom, 2)
                         }
                     }
 
@@ -93,12 +94,16 @@ struct SettingsView: View {
                                 ForEach(MenuBarStyle.allCases) { s in Text(s.label).tag(s) }
                             }
                             .pickerStyle(.segmented)
+                            .controlSize(.small)
+                            .labelsHidden()
                         }
                         labeledRow("Shows") {
-                            Picker("", selection: $store.config.menuBarMetric) {
-                                ForEach(Metric.allCases) { m in Text(m.title).tag(m) }
+                            Picker("", selection: $store.config.menuBarShows) {
+                                ForEach(MenuBarShows.allCases) { m in Text(m.label).tag(m) }
                             }
                             .pickerStyle(.segmented)
+                            .controlSize(.small)
+                            .labelsHidden()
                         }
                     }
 
@@ -138,7 +143,7 @@ struct SettingsView: View {
             }
             .frame(maxHeight: 460)
         }
-        .frame(width: 324)
+        .frame(width: 360)
     }
 
     private var resolvedSummary: String {
@@ -189,6 +194,8 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .controlSize(.small)
+            .labelsHidden()
         }
     }
 
@@ -229,13 +236,16 @@ struct SettingsView: View {
         return HStack(spacing: 8) {
             Text(name)
                 .font(.system(.caption, design: .rounded))
-                .frame(width: 68, alignment: .leading)
+                .frame(width: 60, alignment: .leading)
                 .foregroundStyle(day.enabled ? .primary : .tertiary)
             DatePicker("", selection: dayMinuteBinding(weekday, \.startMinute), displayedComponents: .hourAndMinute)
                 .labelsHidden()
+                .datePickerStyle(.field)
             Text("–").foregroundStyle(.tertiary)
             DatePicker("", selection: dayMinuteBinding(weekday, \.endMinute), displayedComponents: .hourAndMinute)
                 .labelsHidden()
+                .datePickerStyle(.field)
+            Spacer(minLength: 0)
         }
         .disabled(!day.enabled)
         .opacity(day.enabled ? 1 : 0.5)

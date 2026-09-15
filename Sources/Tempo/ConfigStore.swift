@@ -89,7 +89,7 @@ private struct LegacyConfig: Codable {
         config.monthBasis = monthMode == .calendar ? .calendar : .daily
         config.yearBasis = yearMode == .calendar ? .calendar : .daily
         config.menuBarStyle = menuBarStyle
-        config.menuBarMetric = menuBarMetric
+        config.menuBarShows = MenuBarShows(rawValue: menuBarMetric.rawValue) ?? .todayWeek
         config.theme = theme
         config.launchAtLogin = launchAtLogin
         return config

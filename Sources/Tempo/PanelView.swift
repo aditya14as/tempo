@@ -12,7 +12,7 @@ struct PanelView: View {
                 progressContent
             }
         }
-        .frame(width: 324)
+        .frame(width: 360)
     }
 
     private var progressContent: some View {

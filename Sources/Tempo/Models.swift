@@ -73,6 +73,21 @@ enum Metric: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// What the menu bar item tracks: one metric, or today + week together.
+enum MenuBarShows: String, Codable, CaseIterable, Identifiable {
+    case today, week, month, year, todayWeek
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .todayWeek: return "Both"
+        default: return metric?.title ?? rawValue
+        }
+    }
+    /// The single metric, or nil for the combined today + week mode.
+    var metric: Metric? { Metric(rawValue: rawValue) }
+}
+
 // MARK: - Counting basis (what each period's progress is measured against)
 // Each period either defines its own rule or inherits the one below it:
 // year → month → week → daily work hours.
@@ -189,7 +204,7 @@ struct AppConfig: Codable, Equatable {
     var monthBasis: MonthBasis = .weekly
     var yearBasis: YearBasis = .monthly
     var menuBarStyle: MenuBarStyle = .text
-    var menuBarMetric: Metric = .week
+    var menuBarShows: MenuBarShows = .todayWeek
     var theme: Theme = .aurora
     var launchAtLogin: Bool = false
 
