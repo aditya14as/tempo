@@ -27,10 +27,16 @@ Then turn on **Launch at login** in the panel's settings (gear icon).
 
 ## Customize (gear icon in the panel)
 
-- Work start/end times and which days count as workdays
+- Work start/end times and which days count as workdays — plus **per-day
+  hours** (e.g. Friday 10:00–17:00), which day/week/month/year math all honor
 - Show/hide each row (Today / Week / Month / Year) and pick its style:
   **percent, bar, ring, or dot grid**
-- Month & year counting mode: work hours vs calendar
+- **Counting basis per period**, with inheritance:
+  - Week: work hours (from the daily schedule) or calendar
+  - Month: *like week*, work hours, or calendar
+  - Year: *like month*, *like week*, work hours, or calendar
+  - "Like X" follows whatever that period is set to; a caption in settings
+    shows what each period resolves to right now
 - Menu bar item: live percentage text, plain icon, or a tiny filling ring —
   and which metric it tracks
 - Accent theme: Aurora, Sunset, Ocean, Mono

@@ -73,8 +73,46 @@ enum Checks {
             "calendar-mode month matches plain elapsed time"
         )
 
+        // Per-day hours: short Friday (10:00–17:00) shrinks the week to 39h.
+        var shortFriday = schedule
+        shortFriday.setDay(6, DaySchedule(enabled: true, startMinute: 10 * 60, endMinute: 17 * 60))
+        let shortTally = ProgressEngine.workTally(now: wednesday14, from: week.start, to: week.end, schedule: shortFriday, cal: cal)
+        expectClose(shortTally.total, 39 * 3600, "short Friday shrinks week to 39h", accuracy: 0.5)
+        expectClose(
+            ProgressEngine.rangeProgress(metric: .week, mode: .workHours, now: wednesday14, schedule: shortFriday, cal: cal),
+            20.0 / 39.0, "week fraction honors per-day hours"
+        )
+        expectClose(
+            ProgressEngine.dayProgress(now: weekDate(dayOffset: 4, hour: 13, minute: 30), schedule: shortFriday, cal: cal) ?? -1,
+            0.5, "short Friday's own midpoint is 13:30"
+        )
+
+        // Basis inheritance: year → month → week → daily.
+        var config = AppConfig()
+        expect(config.resolvedMode(for: .year) == .workHours, "default chain resolves year to work hours")
+        config.weekBasis = .calendar
+        expect(config.resolvedMode(for: .month) == .calendar, "month 'like week' follows week to calendar")
+        expect(config.resolvedMode(for: .year) == .calendar, "year 'like month' follows the chain to calendar")
+        config.monthBasis = .daily
+        expect(config.resolvedMode(for: .month) == .workHours, "month can break away with its own rule")
+        expect(config.resolvedMode(for: .year) == .workHours, "year 'like month' follows month's own rule")
+        config.yearBasis = .weekly
+        expect(config.resolvedMode(for: .year) == .calendar, "year 'like week' skips past month")
+
+        // Remaining workdays: from Wed (unfinished) to end of week = Wed, Thu, Fri.
+        expect(
+            ProgressEngine.remainingWorkdays(now: wednesday14, until: week.end, schedule: schedule, cal: cal) == 3,
+            "Wed 14:00 leaves 3 workdays in the week"
+        )
+        expect(
+            ProgressEngine.remainingWorkdays(now: weekDate(dayOffset: 2, hour: 19), until: week.end, schedule: schedule, cal: cal) == 2,
+            "after Wed close of work, 2 workdays remain"
+        )
+
         var empty = schedule
-        empty.endMinute = empty.startMinute
+        for weekday in 1...7 {
+            empty.setDay(weekday, DaySchedule(enabled: true, startMinute: 600, endMinute: 600))
+        }
         expect(
             ProgressEngine.dayProgress(now: wednesday14, schedule: empty, cal: cal) == nil,
             "zero-length work window yields no day progress"

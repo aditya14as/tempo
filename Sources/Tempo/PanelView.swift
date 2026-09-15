@@ -96,9 +96,10 @@ struct MetricRowView: View {
         let cal = ProgressEngine.mondayCalendar
         switch metric {
         case .today:
-            return min(config.schedule.hoursPerDay, 24)
+            let day = ProgressEngine.daySchedule(for: now, schedule: config.schedule, cal: cal)
+            return day.seconds > 0 ? min(max(Int((day.seconds / 3600).rounded()), 1), 24) : 8
         case .week:
-            return min(config.schedule.hoursPerDay * max(config.schedule.workdays.count, 1), 60)
+            return min(config.schedule.weekHours, 60)
         case .month:
             return cal.range(of: .day, in: .month, for: now)?.count ?? 30
         case .year:

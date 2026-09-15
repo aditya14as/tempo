@@ -14,14 +14,41 @@ enum ProgressMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct WorkSchedule: Codable, Equatable {
-    var startMinute: Int = 10 * 60
-    var endMinute: Int = 18 * 60
-    /// Calendar weekday numbers, 1 = Sunday … 7 = Saturday.
-    var workdays: Set<Int> = [2, 3, 4, 5, 6]
+struct DaySchedule: Codable, Equatable {
+    var enabled: Bool
+    var startMinute: Int
+    var endMinute: Int
 
-    var secondsPerDay: Double { Double(max(0, endMinute - startMinute)) * 60 }
-    var hoursPerDay: Int { max(1, Int((Double(max(0, endMinute - startMinute)) / 60).rounded())) }
+    var seconds: Double { enabled ? Double(max(0, endMinute - startMinute)) * 60 : 0 }
+}
+
+struct WorkSchedule: Codable, Equatable {
+    /// Keyed by Calendar weekday, 1 = Sunday … 7 = Saturday.
+    var days: [Int: DaySchedule]
+
+    init() {
+        var d: [Int: DaySchedule] = [:]
+        for weekday in 1...7 {
+            d[weekday] = DaySchedule(
+                enabled: (2...6).contains(weekday),  // Mon–Fri
+                startMinute: 10 * 60,
+                endMinute: 18 * 60
+            )
+        }
+        days = d
+    }
+
+    func day(_ weekday: Int) -> DaySchedule {
+        days[weekday] ?? DaySchedule(enabled: false, startMinute: 10 * 60, endMinute: 18 * 60)
+    }
+
+    mutating func setDay(_ weekday: Int, _ schedule: DaySchedule) {
+        days[weekday] = schedule
+    }
+
+    var enabledCount: Int { days.values.filter(\.enabled).count }
+    var weekSeconds: Double { days.values.reduce(0) { $0 + $1.seconds } }
+    var weekHours: Int { max(1, Int((weekSeconds / 3600).rounded())) }
 }
 
 enum Metric: String, Codable, CaseIterable, Identifiable {
@@ -42,6 +69,49 @@ enum Metric: String, Codable, CaseIterable, Identifiable {
         case .week: return "W"
         case .month: return "M"
         case .year: return "Y"
+        }
+    }
+}
+
+// MARK: - Counting basis (what each period's progress is measured against)
+// Each period either defines its own rule or inherits the one below it:
+// year → month → week → daily work hours.
+
+enum WeekBasis: String, Codable, CaseIterable, Identifiable {
+    case daily, calendar
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .daily: return "Work hours"
+        case .calendar: return "Calendar"
+        }
+    }
+}
+
+enum MonthBasis: String, Codable, CaseIterable, Identifiable {
+    case weekly, daily, calendar
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .weekly: return "Like week"
+        case .daily: return "Work hours"
+        case .calendar: return "Calendar"
+        }
+    }
+}
+
+enum YearBasis: String, Codable, CaseIterable, Identifiable {
+    case monthly, weekly, daily, calendar
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .monthly: return "Like month"
+        case .weekly: return "Like week"
+        case .daily: return "Work hours"
+        case .calendar: return "Calendar"
         }
     }
 }
@@ -115,8 +185,9 @@ struct AppConfig: Codable, Equatable {
     var rowWeek = RowConfig(visible: true, style: .bar)
     var rowMonth = RowConfig(visible: true, style: .bar)
     var rowYear = RowConfig(visible: true, style: .dots)
-    var monthMode: ProgressMode = .workHours
-    var yearMode: ProgressMode = .workHours
+    var weekBasis: WeekBasis = .daily
+    var monthBasis: MonthBasis = .weekly
+    var yearBasis: YearBasis = .monthly
     var menuBarStyle: MenuBarStyle = .text
     var menuBarMetric: Metric = .week
     var theme: Theme = .aurora
@@ -140,11 +211,26 @@ struct AppConfig: Codable, Equatable {
         }
     }
 
-    func mode(for metric: Metric) -> ProgressMode {
+    /// Walks the inheritance chain down to a concrete counting rule.
+    func resolvedMode(for metric: Metric) -> ProgressMode {
         switch metric {
-        case .today, .week: return .workHours
-        case .month: return monthMode
-        case .year: return yearMode
+        case .today:
+            return .workHours
+        case .week:
+            return weekBasis == .calendar ? .calendar : .workHours
+        case .month:
+            switch monthBasis {
+            case .calendar: return .calendar
+            case .daily: return .workHours
+            case .weekly: return resolvedMode(for: .week)
+            }
+        case .year:
+            switch yearBasis {
+            case .calendar: return .calendar
+            case .daily: return .workHours
+            case .weekly: return resolvedMode(for: .week)
+            case .monthly: return resolvedMode(for: .month)
+            }
         }
     }
 }

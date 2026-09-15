@@ -15,12 +15,18 @@ final class ConfigStore: ObservableObject {
     }
 
     init() {
-        if let data = UserDefaults.standard.data(forKey: Self.key),
-           let decoded = try? JSONDecoder().decode(AppConfig.self, from: data) {
-            config = decoded
-        } else {
-            config = AppConfig()
+        config = Self.load()
+    }
+
+    private static func load() -> AppConfig {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return AppConfig() }
+        if let decoded = try? JSONDecoder().decode(AppConfig.self, from: data) {
+            return decoded
         }
+        if let legacy = try? JSONDecoder().decode(LegacyConfig.self, from: data) {
+            return legacy.migrated()
+        }
+        return AppConfig()
     }
 
     private func save() {
@@ -40,6 +46,53 @@ final class ConfigStore: ObservableObject {
         } catch {
             // Running as a bare binary (swift run) — ignore.
         }
+    }
+}
+
+// MARK: - v1 config migration (single shared work window + month/year mode enums)
+
+private struct LegacyConfig: Codable {
+    struct Schedule: Codable {
+        var startMinute: Int
+        var endMinute: Int
+        var workdays: Set<Int>
+    }
+
+    var schedule: Schedule
+    var rowToday: RowConfig
+    var rowWeek: RowConfig
+    var rowMonth: RowConfig
+    var rowYear: RowConfig
+    var monthMode: ProgressMode
+    var yearMode: ProgressMode
+    var menuBarStyle: MenuBarStyle
+    var menuBarMetric: Metric
+    var theme: Theme
+    var launchAtLogin: Bool
+
+    func migrated() -> AppConfig {
+        var config = AppConfig()
+        var work = WorkSchedule()
+        for weekday in 1...7 {
+            work.setDay(weekday, DaySchedule(
+                enabled: schedule.workdays.contains(weekday),
+                startMinute: schedule.startMinute,
+                endMinute: schedule.endMinute
+            ))
+        }
+        config.schedule = work
+        config.rowToday = rowToday
+        config.rowWeek = rowWeek
+        config.rowMonth = rowMonth
+        config.rowYear = rowYear
+        config.weekBasis = .daily
+        config.monthBasis = monthMode == .calendar ? .calendar : .daily
+        config.yearBasis = yearMode == .calendar ? .calendar : .daily
+        config.menuBarStyle = menuBarStyle
+        config.menuBarMetric = menuBarMetric
+        config.theme = theme
+        config.launchAtLogin = launchAtLogin
+        return config
     }
 }
 
