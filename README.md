@@ -7,23 +7,27 @@ Default work schedule: **Mon–Fri, 10:00 → 18:00**. The day hits 0% at 10:00 
 100% at 18:00; the week runs Monday 10:00 → Friday 18:00 (work hours only).
 Month and year can each count either work hours or plain calendar time.
 
-## Build & run
+## Install
+
+You need macOS 14+ and Swift. If you don't have Swift, run
+`xcode-select --install` once (the free Command Line Tools are enough — no
+Xcode needed).
 
 ```sh
+git clone https://github.com/aditya14as/tempo.git
+cd tempo
 ./build.sh
-open dist/Tempo.app
-```
-
-Look for the `W 43%`-style item in your menu bar and click it.
-
-To keep it around permanently:
-
-```sh
 cp -R dist/Tempo.app /Applications/
 open /Applications/Tempo.app
 ```
 
-Then turn on **Launch at login** in the panel's settings (gear icon).
+Look for the `T 87% · W 37%`-style item in your menu bar and click it. Turn on
+**Launch at login** in the panel's settings (gear icon) so it starts with your
+Mac.
+
+The build is unsigned (ad-hoc), so if macOS complains on first launch,
+right-click the app → Open. To try it without installing, skip the `cp` line
+and just `open dist/Tempo.app`.
 
 ## Customize (gear icon in the panel)
 
