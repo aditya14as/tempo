@@ -208,6 +208,27 @@ struct AppConfig: Codable, Equatable {
     var theme: Theme = .aurora
     var launchAtLogin: Bool = false
 
+    init() {}
+
+    /// Tolerant decoding: missing keys fall back to defaults so adding a new
+    /// setting never wipes a user's saved config.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppConfig()
+        schedule = (try? c.decodeIfPresent(WorkSchedule.self, forKey: .schedule)) ?? d.schedule ?? d.schedule
+        rowToday = (try? c.decodeIfPresent(RowConfig.self, forKey: .rowToday)) ?? d.rowToday ?? d.rowToday
+        rowWeek = (try? c.decodeIfPresent(RowConfig.self, forKey: .rowWeek)) ?? d.rowWeek ?? d.rowWeek
+        rowMonth = (try? c.decodeIfPresent(RowConfig.self, forKey: .rowMonth)) ?? d.rowMonth ?? d.rowMonth
+        rowYear = (try? c.decodeIfPresent(RowConfig.self, forKey: .rowYear)) ?? d.rowYear ?? d.rowYear
+        weekBasis = (try? c.decodeIfPresent(WeekBasis.self, forKey: .weekBasis)) ?? d.weekBasis ?? d.weekBasis
+        monthBasis = (try? c.decodeIfPresent(MonthBasis.self, forKey: .monthBasis)) ?? d.monthBasis ?? d.monthBasis
+        yearBasis = (try? c.decodeIfPresent(YearBasis.self, forKey: .yearBasis)) ?? d.yearBasis ?? d.yearBasis
+        menuBarStyle = (try? c.decodeIfPresent(MenuBarStyle.self, forKey: .menuBarStyle)) ?? d.menuBarStyle ?? d.menuBarStyle
+        menuBarShows = (try? c.decodeIfPresent(MenuBarShows.self, forKey: .menuBarShows)) ?? d.menuBarShows ?? d.menuBarShows
+        theme = (try? c.decodeIfPresent(Theme.self, forKey: .theme)) ?? d.theme ?? d.theme
+        launchAtLogin = (try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)) ?? d.launchAtLogin ?? d.launchAtLogin
+    }
+
     func row(_ metric: Metric) -> RowConfig {
         switch metric {
         case .today: return rowToday
