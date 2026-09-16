@@ -7,6 +7,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         // Make the menu bar icon accept dropped files (→ Shelf).
         StatusItemDropper.installWhenReady()
+        // Build the Shelf now and park it off-screen, so it already exists
+        // (a legal drop target) before the first drag — a window shown only
+        // after a drag starts can never receive that drag's drop.
+        if let store = ConfigStore.shared {
+            ShelfWindow.shared.prewarm(store: store)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if let store = ConfigStore.shared { ShelfWindow.shared.prewarm(store: store) }
+            }
+        }
         // Pop the Shelf up automatically whenever a file drag starts.
         DragWatcher.shared.start()
     }

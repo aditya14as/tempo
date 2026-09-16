@@ -14,10 +14,24 @@ final class ShelfWindow {
     private var caughtDrop = false
     /// Quiet 0.2s ticks with no hover/drag; at 40 (~8s) the shelf hides.
     private var idleTicks = 0
+    /// True while the card is parked in view; false while hidden off-screen.
+    /// We never `orderOut` — the panel stays ordered-in the whole time so a
+    /// drag that begins elsewhere still counts it as a valid drop target
+    /// (macOS fixes that list when the drag starts). Hiding just moves it
+    /// far off-screen; revealing slides it back under the icon.
+    private var onScreen = false
+    private static let parkedOrigin = NSPoint(x: -20000, y: -20000)
+
+    /// Build the panel and park it off-screen at launch, so it already
+    /// exists (and is a legal drop target) before any drag begins.
+    func prewarm(store: ConfigStore) {
+        ensurePanel(store: store)
+        park()
+    }
 
     func toggle(store: ConfigStore) {
-        if let panel, panel.isVisible {
-            panel.orderOut(nil)
+        if onScreen {
+            park()
             return
         }
         autoShown = false
@@ -25,7 +39,7 @@ final class ShelfWindow {
     }
 
     func hide() {
-        panel?.orderOut(nil)
+        park()
     }
 
     /// Brings the shelf up (or keeps it up) — used when a file lands on
@@ -39,7 +53,7 @@ final class ShelfWindow {
     /// ~8 quiet seconds; hovering it, a drag in flight, or a pressed mouse
     /// button resets the countdown.
     func tickIdle(dragActive: Bool) {
-        guard let panel, panel.isVisible else {
+        guard let panel, onScreen else {
             idleTicks = 0
             return
         }
@@ -54,7 +68,7 @@ final class ShelfWindow {
         idleTicks += 1
         if idleTicks >= 40 {
             idleTicks = 0
-            panel.orderOut(nil)
+            park()
         }
     }
 
@@ -63,7 +77,7 @@ final class ShelfWindow {
     /// fights Mission Control's drag-to-top gesture).
     func revealForFileDrag(store: ConfigStore) {
         caughtDrop = false
-        guard panel?.isVisible != true else { return }
+        guard !onScreen else { return }
         autoShown = true
         show(store: store)
     }
@@ -81,48 +95,63 @@ final class ShelfWindow {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self, self.autoShown, !self.caughtDrop else { return }
             self.autoShown = false
-            self.panel?.orderOut(nil)
+            self.park()
         }
     }
 
+    /// Move the card far off-screen but keep it ordered-in (a live drop
+    /// target). Cheaper and — crucially — different from orderOut, which
+    /// would drop it from the window server's drag-destination list.
+    private func park() {
+        guard let panel else { return }
+        onScreen = false
+        panel.setFrameOrigin(Self.parkedOrigin)
+    }
+
+    private func ensurePanel(store: ConfigStore) {
+        guard panel == nil else { return }
+        let panel = NSPanel(
+            contentRect: NSRect(origin: Self.parkedOrigin, size: NSSize(width: 264, height: 236)),
+            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .utilityWindow],
+            backing: .buffered, defer: false
+        )
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        // No traffic-light dots — it's a floating card, not a document.
+        for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(kind)?.isHidden = true
+        }
+        panel.isMovableByWindowBackground = true
+        // Above the menu bar popover, so it never hides behind the panel.
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.backgroundColor = .clear
+        // AppKit-level drop container: catches drags from VS Code,
+        // Conductor, Zed, browsers — types SwiftUI's drop can't read.
+        let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 236))
+        drop.name = "shelf"
+        drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
+        drop.onTargeted = { DropGlow.shared.targeted = $0 }
+        drop.onAnyDrop = { ShelfWindow.shared.noteDrop() }
+        let hosting = NSHostingView(rootView: ShelfView().environmentObject(store))
+        hosting.frame = drop.bounds
+        hosting.autoresizingMask = [.width, .height]
+        drop.addSubview(hosting)
+        panel.contentView = drop
+        // Order it in once, off-screen. It stays ordered-in for the app's
+        // whole life so drags always see it as a possible drop target.
+        panel.orderFrontRegardless()
+        self.panel = panel
+    }
+
     private func show(store: ConfigStore) {
-        if panel == nil {
-            let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 264, height: 236),
-                styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .utilityWindow],
-                backing: .buffered, defer: false
-            )
-            panel.titleVisibility = .hidden
-            panel.titlebarAppearsTransparent = true
-            // No traffic-light dots — it's a floating card, not a document.
-            for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
-                panel.standardWindowButton(kind)?.isHidden = true
-            }
-            panel.isMovableByWindowBackground = true
-            // Above the menu bar popover, so it never hides behind the panel.
-            panel.level = .statusBar
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            panel.hidesOnDeactivate = false
-            panel.isReleasedWhenClosed = false
-            panel.backgroundColor = .clear
-            // AppKit-level drop container: catches drags from VS Code,
-            // Conductor, Zed, browsers — types SwiftUI's drop can't read.
-            let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 236))
-            drop.name = "shelf"
-            drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
-            drop.onTargeted = { DropGlow.shared.targeted = $0 }
-            drop.onAnyDrop = { ShelfWindow.shared.noteDrop() }
-            let hosting = NSHostingView(rootView: ShelfView().environmentObject(store))
-            hosting.frame = drop.bounds
-            hosting.autoresizingMask = [.width, .height]
-            drop.addSubview(hosting)
-            panel.contentView = drop
-            self.panel = panel
-        }
-        if let panel {
-            position(panel)
-            panel.orderFrontRegardless()
-        }
+        ensurePanel(store: store)
+        guard let panel else { return }
+        onScreen = true
+        position(panel)
+        panel.orderFrontRegardless()
     }
 
     /// Sits right under the Tempo menu bar icon. If the menu bar panel is
