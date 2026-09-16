@@ -36,6 +36,12 @@ and just `open dist/Tempo.app`.
 - **Split a day into slots** (up to 4): e.g. 11:00–12:00 and 14:00–15:00 —
   breaks between slots don't count toward progress
 - **Top 5 tasks** right in the panel: check off your focus items for the day
+  - Give a task a **due date & time** (clock button) — Tempo sends a
+    notification when it's due, and the chip turns red when overdue
+  - **Drag & drop a file or link** onto the list (from Finder, VS Code, a
+    browser…) to make it a task; click the paperclip chip to open it
+  - **Add to Apple Reminders** from the clock popover (asks for Reminders
+    access the first time)
 - Show/hide each row (Today / Week / Month / Year) and pick its style:
   **percent, bar, ring, or dot grid**
 - **Counting basis per period**, with inheritance:

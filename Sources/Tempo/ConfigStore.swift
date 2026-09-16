@@ -11,11 +11,16 @@ final class ConfigStore: ObservableObject {
             if config.launchAtLogin != oldValue.launchAtLogin {
                 applyLaunchAtLogin(config.launchAtLogin)
             }
+            if config.todos != oldValue.todos {
+                ReminderScheduler.shared.sync(config.todos)
+            }
         }
     }
 
     init() {
         config = Self.load()
+        // Re-arm due-task notifications after a relaunch or reboot.
+        ReminderScheduler.shared.sync(config.todos)
     }
 
     private static func load() -> AppConfig {

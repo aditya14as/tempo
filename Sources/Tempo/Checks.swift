@@ -166,6 +166,82 @@ enum Checks {
         expect(restored?.todos.first?.text == "Ship it", "todo text survives save and load")
         expect(restored?.todos.last?.done == true, "todo done state survives save and load")
 
+        // Due dates: labels, overdue flag, and which tasks earn a notification.
+        func exact(_ y: Int, _ mo: Int, _ d: Int, _ h: Int, _ mi: Int) -> Date {
+            cal.date(from: DateComponents(year: y, month: mo, day: d, hour: h, minute: mi))!
+        }
+        let wedNow = exact(2026, 5, 13, 14, 0)  // Wednesday 13 May 2026, 14:00
+        expect(
+            DueFormat.label(exact(2026, 5, 13, 15, 30), now: wedNow, cal: cal) == "Today 15:30",
+            "same-day due reads Today HH:mm"
+        )
+        expect(
+            DueFormat.label(exact(2026, 5, 14, 9, 5), now: wedNow, cal: cal) == "Tomorrow 09:05",
+            "next-day due reads Tomorrow HH:mm"
+        )
+        expect(
+            DueFormat.label(exact(2026, 5, 22, 17, 0), now: wedNow, cal: cal) == "Fri 22 May 17:00",
+            "far due reads weekday day month time (got \"\(DueFormat.label(exact(2026, 5, 22, 17, 0), now: wedNow, cal: cal))\")"
+        )
+        expect(
+            DueFormat.isOverdue(exact(2026, 5, 13, 13, 0), now: wedNow, done: false),
+            "past due and not done is overdue"
+        )
+        expect(
+            !DueFormat.isOverdue(exact(2026, 5, 13, 13, 0), now: wedNow, done: true),
+            "a finished task is never overdue"
+        )
+        expect(
+            !DueFormat.isOverdue(exact(2026, 5, 13, 15, 0), now: wedNow, done: false),
+            "future due is not overdue"
+        )
+        let futureDue = exact(2026, 5, 13, 16, 0)
+        let reminderPool = [
+            TodoItem(text: "done already", done: true, dueDate: futureDue),
+            TodoItem(text: "no due date"),
+            TodoItem(text: "already fired", dueDate: exact(2026, 5, 13, 12, 0)),
+            TodoItem(text: "ok", dueDate: futureDue),
+            TodoItem(text: "   ", dueDate: futureDue),
+        ]
+        let pending = DueFormat.pendingReminders(reminderPool, now: wedNow)
+        expect(
+            pending.count == 1 && pending.first?.text == "ok",
+            "only unfinished, future-due, non-empty tasks get a notification"
+        )
+        let comps = DueFormat.triggerComponents(exact(2026, 5, 13, 15, 30), cal: cal)
+        expect(
+            comps.year == 2026 && comps.month == 5 && comps.day == 13
+                && comps.hour == 15 && comps.minute == 30,
+            "notification trigger keys on exact date and minute"
+        )
+
+        // Dropped files and links become tasks.
+        let fileDrop = TodoItem.fromDroppedURL(URL(fileURLWithPath: "/tmp/report.pdf"))
+        expect(fileDrop.text == "report.pdf", "dropped file names the task after the file")
+        expect(fileDrop.link == "/tmp/report.pdf", "dropped file keeps its full path")
+        expect(fileDrop.linkName == "report.pdf", "file chip shows just the file name")
+        expect(fileDrop.linkURL?.isFileURL == true, "dropped file opens as a file URL")
+        let webDrop = TodoItem.fromDroppedURL(URL(string: "https://github.com/aditya14as/tempo")!)
+        expect(webDrop.link == "https://github.com/aditya14as/tempo", "dropped link keeps the full URL")
+        expect(webDrop.linkName == "github.com", "link chip shows the site name")
+
+        // Due date and attachment survive save and load.
+        var fullConfig = AppConfig()
+        fullConfig.todos = [TodoItem(text: "Review", dueDate: futureDue, link: "/tmp/report.pdf")]
+        let fullData = try? JSONEncoder().encode(fullConfig)
+        let fullBack = fullData.flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
+        expect(
+            abs((fullBack?.todos.first?.dueDate?.timeIntervalSince(futureDue)) ?? 999) < 1,
+            "due date survives save and load"
+        )
+        expect(fullBack?.todos.first?.link == "/tmp/report.pdf", "attachment survives save and load")
+
+        // Yesterday's saved todos (no due/link fields) still decode.
+        let oldTodo = #"{"id":"6F1C1C1E-2A2B-4C4D-8E8F-101112131415","text":"old","done":false}"#.data(using: .utf8)!
+        let decodedOld = try? JSONDecoder().decode(TodoItem.self, from: oldTodo)
+        expect(decodedOld?.text == "old" && decodedOld?.dueDate == nil && decodedOld?.link == nil,
+               "todos saved before this feature still load")
+
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1
     }

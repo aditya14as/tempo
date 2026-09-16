@@ -24,6 +24,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>LSMinimumSystemVersion</key>    <string>14.0</string>
     <key>LSUIElement</key>               <true/>
+    <key>NSRemindersUsageDescription</key>
+    <string>Tempo adds your tasks to Apple Reminders when you ask it to.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Tempo adds your tasks to Apple Reminders when you ask it to.</string>
 </dict>
 </plist>
 PLIST

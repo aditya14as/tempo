@@ -242,6 +242,32 @@ struct TodoItem: Codable, Equatable, Identifiable {
     var id = UUID()
     var text: String
     var done: Bool = false
+    /// When set, Tempo fires a notification at this moment (and shows a due chip).
+    var dueDate: Date? = nil
+    /// A dropped file's path or a dropped URL; the chip opens it on click.
+    var link: String? = nil
+
+    /// The attached file/URL as something openable, or nil.
+    var linkURL: URL? {
+        guard let link, !link.isEmpty else { return nil }
+        if link.hasPrefix("/") { return URL(fileURLWithPath: link) }
+        return URL(string: link)
+    }
+
+    /// Short display name for the attachment chip.
+    var linkName: String? {
+        guard let link, !link.isEmpty else { return nil }
+        if link.hasPrefix("/") { return (link as NSString).lastPathComponent }
+        return URL(string: link)?.host ?? link
+    }
+
+    /// Builds a task from a file or web URL dropped onto the list.
+    static func fromDroppedURL(_ url: URL) -> TodoItem {
+        if url.isFileURL {
+            return TodoItem(text: url.lastPathComponent, link: url.path)
+        }
+        return TodoItem(text: url.absoluteString, link: url.absoluteString)
+    }
 }
 
 struct AppConfig: Codable, Equatable {
