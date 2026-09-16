@@ -196,10 +196,30 @@ final class FileDropView: NSView {
         if let button = forwardClicksTo { button.rightMouseDown(with: event) } else { super.rightMouseDown(with: event) }
     }
 
+    /// Answer with an operation the SOURCE actually offers, else the drop is
+    /// refused on release and slides back. Conductor/Zed often offer only
+    /// .generic or .move, not .copy — returning a plain .copy got rejected.
+    private func operation(for sender: NSDraggingInfo) -> NSDragOperation {
+        let offered = sender.draggingSourceOperationMask
+        for candidate: NSDragOperation in [.copy, .generic, .link, .move] where offered.contains(candidate) {
+            return candidate
+        }
+        // Source offered nothing specific — take it as a copy anyway.
+        return offered.isEmpty ? .copy : offered
+    }
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        Self.log("enter@\(name)", pasteboard: sender.draggingPasteboard)
+        Self.log("enter@\(name) mask=\(sender.draggingSourceOperationMask.rawValue)", pasteboard: sender.draggingPasteboard)
         onTargeted?(true)
-        return .copy
+        return operation(for: sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        operation(for: sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        true
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
