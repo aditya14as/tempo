@@ -13,14 +13,44 @@ final class ConfigStore: ObservableObject {
             }
             if config.todos != oldValue.todos {
                 ReminderScheduler.shared.sync(config.todos)
+                pushDoneChangesToAppleReminders(oldTodos: oldValue.todos)
             }
         }
     }
 
     init() {
         config = Self.load()
+        // The notification's "Mark done" button checks the task off here too.
+        ReminderScheduler.shared.activate { [weak self] todoID in
+            guard let self, let index = self.config.todos.firstIndex(where: { $0.id == todoID }) else { return }
+            self.config.todos[index].done = true
+        }
         // Re-arm due-task notifications after a relaunch or reboot.
         ReminderScheduler.shared.sync(config.todos)
+    }
+
+    /// Checking a task off in Tempo completes its Apple reminder (and back).
+    private func pushDoneChangesToAppleReminders(oldTodos: [TodoItem]) {
+        let oldDone = Dictionary(uniqueKeysWithValues: oldTodos.map { ($0.id, $0.done) })
+        for todo in config.todos {
+            guard let reminderID = todo.reminderID, oldDone[todo.id] != todo.done else { continue }
+            AppleReminders.setCompleted(reminderID, done: todo.done)
+        }
+    }
+
+    /// Pulls completed-state from Apple Reminders (called when the panel opens):
+    /// a task finished in the Reminders app gets checked off here, and one
+    /// re-opened there re-opens here.
+    func pullAppleReminderCompletions() {
+        let ids = config.todos.compactMap(\.reminderID)
+        guard !ids.isEmpty else { return }
+        AppleReminders.completions(for: ids) { [weak self] map in
+            guard let self, !map.isEmpty else { return }
+            let merged = DueFormat.applyingCompletions(self.config.todos, map)
+            if merged != self.config.todos {
+                self.config.todos = merged
+            }
+        }
     }
 
     private static func load() -> AppConfig {

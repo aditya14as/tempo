@@ -66,6 +66,8 @@ struct PanelView: View {
             }
             .padding(16)
         }
+        // Opening the panel pulls done-state back from the Reminders app.
+        .onAppear { store.pullAppleReminderCompletions() }
     }
 
     private var tabBar: some View {
@@ -87,6 +89,8 @@ struct PanelView: View {
                             : AnyShapeStyle(Color.clear))
                     )
                     .foregroundStyle(tab == t ? .white : .secondary)
+                    // Transparent areas don't hit-test; make the whole pill clickable.
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -377,8 +381,11 @@ struct DuePopover: View {
                 Button("Add to Apple Reminders") {
                     guard let todo = store.config.todos.first(where: { $0.id == todoID }) else { return }
                     status = "Adding…"
-                    AppleReminders.add(todo) { result in
+                    AppleReminders.add(todo) { result, reminderID in
                         status = result
+                        if let reminderID {
+                            update { $0.reminderID = reminderID }
+                        }
                     }
                 }
             }
@@ -452,9 +459,11 @@ struct DuePopover: View {
 }
 
 /// This week + next week at a glance: tasks sit on their due day.
+/// Click a day to see just that day's tasks; click again to show all.
 struct WeekGlance: View {
     @EnvironmentObject var store: ConfigStore
     var now: Date
+    @State private var selectedDay: Date?
 
     private var cal: Calendar { ProgressEngine.mondayCalendar }
 
@@ -491,10 +500,16 @@ struct WeekGlance: View {
     private func dayCell(_ day: Date) -> some View {
         let tasks = DueFormat.tasks(store.config.todos, dueOn: day, cal: cal)
         let isToday = cal.isDate(day, inSameDayAs: now)
+        let isSelected = selectedDay.map { cal.isDate(day, inSameDayAs: $0) } ?? false
         let hasOverdue = tasks.contains { DueFormat.isOverdue($0.dueDate ?? now, now: now, done: $0.done) }
         let weekdayIndex = (cal.component(.weekday, from: day) + 5) % 7  // 0 = Monday
         let letters = ["M", "T", "W", "T", "F", "S", "S"]
-        return VStack(spacing: 3) {
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                selectedDay = isSelected ? nil : day
+            }
+        } label: {
+            VStack(spacing: 3) {
             Text(letters[weekdayIndex])
                 .font(.system(size: 8, design: .rounded).weight(.bold))
                 .foregroundStyle(.tertiary)
@@ -517,26 +532,48 @@ struct WeekGlance: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isToday ? Color.primary.opacity(0.08) : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    isToday ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.clear),
-                    lineWidth: 1
-                )
-        )
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isToday || isSelected ? Color.primary.opacity(0.08) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? AnyShapeStyle(store.config.theme.gradient)
+                            : isToday ? AnyShapeStyle(Color.secondary.opacity(0.5))
+                            : AnyShapeStyle(Color.clear),
+                        lineWidth: isSelected ? 1.5 : 1
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private var agenda: some View {
-        let dated = DueFormat.agenda(store.config.todos)
+        let dated = selectedDay.map { DueFormat.tasks(store.config.todos, dueOn: $0, cal: cal) }
+            ?? DueFormat.agenda(store.config.todos)
+        if let day = selectedDay {
+            HStack {
+                Text(DueFormat.label(day, now: now, cal: cal).replacingOccurrences(of: " 00:00", with: ""))
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                Spacer()
+                Button("Show all") {
+                    withAnimation(.easeInOut(duration: 0.15)) { selectedDay = nil }
+                }
+                .buttonStyle(.plain)
+                .font(.system(.caption2, design: .rounded))
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 4)
+        }
         if dated.isEmpty {
-            Text("No dated tasks yet. Give a task a due time in the Tasks tab and it lands here.")
+            Text(selectedDay == nil
+                ? "No dated tasks yet. Give a task a due time in the Tasks tab and it lands here."
+                : "Nothing due this day.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 4)

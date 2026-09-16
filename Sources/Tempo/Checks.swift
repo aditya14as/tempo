@@ -289,6 +289,41 @@ enum Checks {
             "shelf survives save and load"
         )
 
+        // Two-way Apple Reminders sync: their completed-state wins on pull.
+        let syncPool = [
+            TodoItem(text: "finish there", done: false, reminderID: "r1"),
+            TodoItem(text: "reopen there", done: true, reminderID: "r2"),
+            TodoItem(text: "deleted there", done: false, reminderID: "r3"),
+            TodoItem(text: "never exported", done: false),
+        ]
+        let merged = DueFormat.applyingCompletions(syncPool, ["r1": true, "r2": false])
+        expect(
+            merged.map(\.done) == [true, false, false, false],
+            "reminders completions apply both ways and skip missing/unexported"
+        )
+        expect(
+            DueFormat.applyingCompletions(syncPool, [:]) == syncPool,
+            "an empty completions map changes nothing"
+        )
+
+        // Notification identifiers carry the task's UUID.
+        let noteTodo = TodoItem(text: "ping me")
+        expect(
+            ReminderScheduler.todoID(fromNotificationID: "tempo.todo." + noteTodo.id.uuidString) == noteTodo.id,
+            "notification id round-trips back to the task id"
+        )
+        expect(
+            ReminderScheduler.todoID(fromNotificationID: "other.thing") == nil,
+            "foreign notification ids are ignored"
+        )
+
+        // reminderID survives save and load.
+        var syncConfig = AppConfig()
+        syncConfig.todos = [TodoItem(text: "exported", reminderID: "abc-123")]
+        let syncData = try? JSONEncoder().encode(syncConfig)
+        let syncBack = syncData.flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
+        expect(syncBack?.todos.first?.reminderID == "abc-123", "reminder link survives save and load")
+
         // Yesterday's saved todos (no due/link fields) still decode.
         let oldTodo = #"{"id":"6F1C1C1E-2A2B-4C4D-8E8F-101112131415","text":"old","done":false}"#.data(using: .utf8)!
         let decodedOld = try? JSONDecoder().decode(TodoItem.self, from: oldTodo)

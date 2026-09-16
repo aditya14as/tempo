@@ -56,6 +56,19 @@ enum DueFormat {
         todos.filter { $0.dueDate != nil }
             .sorted { ($0.dueDate ?? .distantPast) < ($1.dueDate ?? .distantPast) }
     }
+
+    /// Applies Apple Reminders' completed-state onto matching tasks (both ways:
+    /// a completed reminder marks the task done, an un-completed one re-opens it).
+    static func applyingCompletions(_ todos: [TodoItem], _ completed: [String: Bool]) -> [TodoItem] {
+        todos.map { todo in
+            guard let id = todo.reminderID, let isDone = completed[id], todo.done != isDone else {
+                return todo
+            }
+            var todo = todo
+            todo.done = isDone
+            return todo
+        }
+    }
 }
 
 // MARK: - One-tap due choices (pure, covered by --check)
@@ -102,7 +115,11 @@ enum QuickDue {
 @MainActor
 final class ReminderScheduler {
     static let shared = ReminderScheduler()
-    private static let idPrefix = "tempo.todo."
+    nonisolated static let idPrefix = "tempo.todo."
+    nonisolated static let doneActionID = "TEMPO_MARK_DONE"
+    nonisolated static let categoryID = "TEMPO_TODO"
+
+    private let delegate = NotificationDelegate()
 
     /// UNUserNotificationCenter only works from a real .app bundle;
     /// `swift run` and `--check` must never touch it.
@@ -110,10 +127,30 @@ final class ReminderScheduler {
         Bundle.main.bundleIdentifier != nil && Bundle.main.bundlePath.hasSuffix(".app")
     }
 
-    /// Makes pending notifications mirror the task list: one per future due task.
+    /// The task UUID hiding inside one of our notification identifiers.
+    nonisolated static func todoID(fromNotificationID id: String) -> UUID? {
+        guard id.hasPrefix(idPrefix) else { return nil }
+        return UUID(uuidString: String(id.dropFirst(idPrefix.count)))
+    }
+
+    /// Hooks up the "Mark done" notification button. Call once at launch.
+    func activate(onMarkDone: @escaping @MainActor (UUID) -> Void) {
+        guard available else { return }
+        delegate.onMarkDone = onMarkDone
+        let center = UNUserNotificationCenter.current()
+        center.delegate = delegate
+        let done = UNNotificationAction(identifier: Self.doneActionID, title: "Mark done")
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.categoryID, actions: [done], intentIdentifiers: [])
+        ])
+    }
+
+    /// Makes pending notifications mirror the task list: one per future due
+    /// task. Also clears already-shown notifications for tasks now done/gone.
     func sync(_ todos: [TodoItem], now: Date = Date()) {
         guard available else { return }
         let pending = DueFormat.pendingReminders(todos, now: now)
+        let activeIDs = Set(todos.filter { !$0.done }.map { Self.idPrefix + $0.id.uuidString })
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             center.getPendingNotificationRequests { requests in
@@ -126,6 +163,7 @@ final class ReminderScheduler {
                     content.title = "Tempo"
                     content.body = todo.text
                     content.sound = .default
+                    content.categoryIdentifier = Self.categoryID
                     let trigger = UNCalendarNotificationTrigger(
                         dateMatching: DueFormat.triggerComponents(due), repeats: false
                     )
@@ -135,26 +173,69 @@ final class ReminderScheduler {
                     ))
                 }
             }
+            center.getDeliveredNotifications { delivered in
+                let stale = delivered.map(\.request.identifier)
+                    .filter { $0.hasPrefix(Self.idPrefix) && !activeIDs.contains($0) }
+                if !stale.isEmpty {
+                    center.removeDeliveredNotifications(withIdentifiers: stale)
+                }
+            }
         }
+    }
+}
+
+/// Routes the notification's "Mark done" button back into the app.
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    var onMarkDone: (@MainActor (UUID) -> Void)?
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if response.actionIdentifier == ReminderScheduler.doneActionID,
+            let todoID = ReminderScheduler.todoID(fromNotificationID: response.notification.request.identifier) {
+            DispatchQueue.main.async { [onMarkDone] in
+                MainActor.assumeIsolated { onMarkDone?(todoID) }
+            }
+        }
+        completionHandler()
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        // Show the banner even while Tempo is frontmost.
+        completionHandler([.banner, .sound])
     }
 }
 
 // MARK: - Export a task into the Apple Reminders app
 
 enum AppleReminders {
-    /// Adds the task to the default Reminders list; reports "Added" or why not.
-    static func add(_ todo: TodoItem, completion: @escaping @MainActor (String) -> Void) {
-        let store = EKEventStore()
+    /// One store for the app: identifiers stay valid across calls.
+    private static let store = EKEventStore()
+
+    static var hasAccess: Bool {
+        EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
+    }
+
+    /// Adds the task to the default Reminders list; hands back a status line
+    /// and the new reminder's identifier so done-state can sync later.
+    static func add(_ todo: TodoItem, completion: @escaping @MainActor (String, String?) -> Void) {
         store.requestFullAccessToReminders { granted, _ in
             DispatchQueue.main.async {
                 guard granted else {
-                    completion("No access — allow Reminders in System Settings → Privacy")
+                    completion("No access — allow Reminders in System Settings → Privacy", nil)
                     return
                 }
                 let reminder = EKReminder(eventStore: store)
                 let text = todo.text.trimmingCharacters(in: .whitespaces)
                 reminder.title = text.isEmpty ? "Task from Tempo" : text
                 reminder.calendar = store.defaultCalendarForNewReminders()
+                reminder.isCompleted = todo.done
                 if let due = todo.dueDate {
                     reminder.dueDateComponents = DueFormat.triggerComponents(due)
                     reminder.addAlarm(EKAlarm(absoluteDate: due))
@@ -162,11 +243,39 @@ enum AppleReminders {
                 if let link = todo.link { reminder.notes = link }
                 do {
                     try store.save(reminder, commit: true)
-                    completion("Added to Reminders ✓")
+                    completion("Added to Reminders ✓", reminder.calendarItemIdentifier)
                 } catch {
-                    completion("Couldn't save: \(error.localizedDescription)")
+                    completion("Couldn't save: \(error.localizedDescription)", nil)
                 }
             }
+        }
+    }
+
+    /// Pushes a task's done state onto its Apple reminder (quietly, no prompt).
+    static func setCompleted(_ reminderID: String, done: Bool) {
+        guard hasAccess,
+            let reminder = store.calendarItem(withIdentifier: reminderID) as? EKReminder,
+            reminder.isCompleted != done
+        else { return }
+        reminder.isCompleted = done
+        try? store.save(reminder, commit: true)
+    }
+
+    /// Reads back completed-state for exported tasks: [reminderID: isCompleted].
+    /// Deleted reminders simply don't appear in the result.
+    static func completions(for ids: [String], completion: @escaping @MainActor ([String: Bool]) -> Void) {
+        guard hasAccess, !ids.isEmpty else {
+            DispatchQueue.main.async { completion([:]) }
+            return
+        }
+        DispatchQueue.main.async {
+            var map: [String: Bool] = [:]
+            for id in ids {
+                if let reminder = store.calendarItem(withIdentifier: id) as? EKReminder {
+                    map[id] = reminder.isCompleted
+                }
+            }
+            completion(map)
         }
     }
 }

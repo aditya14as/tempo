@@ -246,6 +246,8 @@ struct TodoItem: Codable, Equatable, Identifiable {
     var dueDate: Date? = nil
     /// A dropped file's path or a dropped URL; the chip opens it on click.
     var link: String? = nil
+    /// Apple Reminders identifier once exported — lets done-state sync both ways.
+    var reminderID: String? = nil
 
     /// The attached file/URL as something openable, or nil.
     var linkURL: URL? {

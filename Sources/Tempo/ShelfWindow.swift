@@ -28,16 +28,17 @@ final class ShelfWindow {
             panel.titleVisibility = .hidden
             panel.titlebarAppearsTransparent = true
             panel.isMovableByWindowBackground = true
-            panel.level = .floating
+            // Above the menu bar popover, so it never hides behind the panel.
+            panel.level = .statusBar
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.hidesOnDeactivate = false
             panel.isReleasedWhenClosed = false
             panel.backgroundColor = .clear
             panel.contentView = NSHostingView(rootView: ShelfView().environmentObject(store))
-            // Park it near the top-right, under the menu bar item.
+            // Park it top-center, notch style — away from the menu bar panel.
             if let screen = NSScreen.main {
                 let f = screen.visibleFrame
-                panel.setFrameTopLeftPoint(NSPoint(x: f.maxX - 284, y: f.maxY - 8))
+                panel.setFrameTopLeftPoint(NSPoint(x: f.midX - 132, y: f.maxY - 6))
             }
             self.panel = panel
         }
