@@ -197,16 +197,18 @@ struct ShelfView: View {
                     LazyVGrid(columns: columns, spacing: 8) {
                         ForEach(store.config.shelf) { item in
                             tile(item)
+                                .transition(.scale.combined(with: .opacity))
                         }
                     }
                 }
-                Text("Drag items out anywhere.")
+                Text(glow.dragInFlight ? "Drop it on this card." : "Drag items out anywhere.")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(glow.dragInFlight ? .secondary : .tertiary)
             }
         }
         .padding(14)
         .frame(width: 264, height: 236, alignment: .top)
+        .animation(.spring(duration: 0.3), value: store.config.shelf)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             // Colored border while any file drag is in flight — the card,
@@ -228,15 +230,15 @@ struct ShelfView: View {
     private var emptyState: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-            .foregroundStyle(.quaternary)
+            .foregroundStyle(glow.dragInFlight ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(.quaternary))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(
                 VStack(spacing: 6) {
-                    Image(systemName: "tray.and.arrow.down")
-                        .font(.system(size: 20))
-                    Text("Drop files or links here")
-                        .font(.system(.caption, design: .rounded))
-                    Text("then drag them out anywhere")
+                    Image(systemName: glow.dragInFlight ? "arrow.down.circle.fill" : "tray.and.arrow.down")
+                        .font(.system(size: glow.dragInFlight ? 26 : 20))
+                    Text(glow.dragInFlight ? "Drop it here!" : "Drop files or links here")
+                        .font(.system(.caption, design: .rounded).weight(glow.dragInFlight ? .semibold : .regular))
+                    Text(glow.dragInFlight ? "(the menu bar can't take drops)" : "then drag them out anywhere")
                         .font(.system(size: 10, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }

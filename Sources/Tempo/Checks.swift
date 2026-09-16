@@ -367,6 +367,23 @@ enum Checks {
             "junk lines are skipped, real paths kept"
         )
 
+        let shelfAB = [ShelfItem(link: "/a"), ShelfItem(link: "/b")]
+        expect(
+            ShelfItem.merged(shelf: shelfAB, dropped: [URL(fileURLWithPath: "/new")])
+                .map(\.link) == ["/new", "/a", "/b"],
+            "a dropped file lands at the front of the shelf"
+        )
+        expect(
+            ShelfItem.merged(shelf: shelfAB, dropped: [URL(fileURLWithPath: "/b")])
+                .map(\.link) == ["/b", "/a"],
+            "re-dropping a file moves it to the front, no duplicate"
+        )
+        expect(
+            ShelfItem.merged(shelf: shelfAB, dropped: [URL(fileURLWithPath: "/c")], cap: 2)
+                .map(\.link) == ["/c", "/a"],
+            "a full shelf drops its oldest item to fit a new one"
+        )
+
         // Builds the little-endian blob Chromium uses for drag data:
         // payload size, entry count, then UTF-16 key/value pairs padded
         // to 4-byte boundaries. Mirrors Chromium's Pickle writer.

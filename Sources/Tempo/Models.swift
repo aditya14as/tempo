@@ -299,6 +299,27 @@ struct ShelfItem: Codable, Equatable, Identifiable {
     static func fromDroppedURL(_ url: URL) -> ShelfItem {
         ShelfItem(link: url.isFileURL ? url.path : url.absoluteString)
     }
+
+    /// New drops land at the FRONT of the shelf. Dropping something already
+    /// there moves it to the front (instead of being silently ignored), and
+    /// when the shelf is full the oldest item falls off the end — so a drop
+    /// always visibly does something.
+    static func merged(shelf: [ShelfItem], dropped: [URL], cap: Int = AppConfig.maxShelf) -> [ShelfItem] {
+        var result = shelf
+        for url in dropped.reversed() {
+            let item = ShelfItem.fromDroppedURL(url)
+            if let index = result.firstIndex(where: { $0.link == item.link }) {
+                let existing = result.remove(at: index)
+                result.insert(existing, at: 0)
+            } else {
+                result.insert(item, at: 0)
+            }
+        }
+        if result.count > cap {
+            result.removeLast(result.count - cap)
+        }
+        return result
+    }
 }
 
 struct AppConfig: Codable, Equatable {

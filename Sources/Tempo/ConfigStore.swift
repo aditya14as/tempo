@@ -43,14 +43,12 @@ final class ConfigStore: ObservableObject {
     }
 
     /// Files/links landing on the Shelf (from the shelf window or the
-    /// menu bar icon). Skips duplicates, respects the shelf cap.
+    /// menu bar icon). Never a silent no-op: repeats move to the front,
+    /// a full shelf drops its oldest item.
     @discardableResult
     func addToShelf(_ urls: [URL]) -> Bool {
-        let existing = Set(config.shelf.map(\.link))
-        let fresh = urls.map(ShelfItem.fromDroppedURL).filter { !existing.contains($0.link) }
-        let free = AppConfig.maxShelf - config.shelf.count
-        guard free > 0, !fresh.isEmpty else { return false }
-        config.shelf.append(contentsOf: fresh.prefix(free))
+        guard !urls.isEmpty else { return false }
+        config.shelf = ShelfItem.merged(shelf: config.shelf, dropped: urls)
         return true
     }
 

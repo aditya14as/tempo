@@ -238,6 +238,7 @@ final class FileDropView: NSView {
         if !urls.isEmpty {
             Self.log("drop ok \(urls.count)", pasteboard: pb)
             onDrop?(urls)
+            NSSound(named: "Pop")?.play()  // audible "got it!"
             return true
         }
 
@@ -250,7 +251,10 @@ final class FileDropView: NSView {
             for receiver in receivers {
                 receiver.receivePromisedFiles(atDestination: dir, options: [:], operationQueue: Self.promiseQueue) { url, error in
                     guard error == nil else { return }
-                    DispatchQueue.main.async { [weak self] in self?.onDrop?([url]) }
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onDrop?([url])
+                        NSSound(named: "Pop")?.play()
+                    }
                 }
             }
             return true
