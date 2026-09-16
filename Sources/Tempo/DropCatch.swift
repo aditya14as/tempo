@@ -296,10 +296,11 @@ final class FileDropView: NSView {
 final class DragWatcher {
     static let shared = DragWatcher()
     private var timer: Timer?
+    private var mouseMonitor: Any?
     private var lastChange = NSPasteboard(name: .drag).changeCount
     private var dragActive = false
     /// Where the button went down; a move past `dragSlop` from here means
-    /// the mouse is dragging *something* — time to arm the catcher.
+    /// the mouse is dragging *something* — time to light the card up.
     private var pressOrigin: NSPoint?
     private var mouseDragging = false
     private let dragSlop: CGFloat = 8
@@ -313,7 +314,19 @@ final class DragWatcher {
 
     func start() {
         guard timer == nil else { return }
-        let timer = Timer(timeInterval: 0.2, repeats: true) { _ in
+        // Fires the instant the button goes down in ANY other app (Conductor,
+        // Zed, Finder…). We place the card at its real spot right then — while
+        // still invisible — because macOS locks a window's drop region when
+        // the drag begins; arriving even a frame late means the card never
+        // catches the drop. Mouse monitors need no accessibility permission.
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { _ in
+            MainActor.assumeIsolated {
+                guard let store = ConfigStore.shared else { return }
+                DragWatcher.shared.pressOrigin = NSEvent.mouseLocation
+                ShelfWindow.shared.prime(store: store)
+            }
+        }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { DragWatcher.shared.tick() } }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -347,8 +360,9 @@ final class DragWatcher {
     }
 
     /// Pasteboard-free drag detection: button held + moved = dragging.
-    /// Arms the catcher over the icon; disarms shortly after release
-    /// (shortly, so a drop landing on it still gets delivered).
+    /// The card is already primed (placed, invisible) from the mouse-down
+    /// monitor; here we just FADE IT IN once real dragging is under way, and
+    /// tuck it away on release.
     private func trackMouseDrag(mouseIsDown: Bool) {
         if mouseIsDown {
             let here = NSEvent.mouseLocation
@@ -358,10 +372,6 @@ final class DragWatcher {
             }
             if !mouseDragging, hypot(here.x - origin.x, here.y - origin.y) > dragSlop {
                 mouseDragging = true
-                // The moment the mouse starts dragging ANYTHING, light the
-                // box up so the icon reads as the target. We do NOT float a
-                // catcher over the icon — a window shown mid-drag can't
-                // receive the drop AND it blocks the icon that can.
                 DropGlow.shared.dragInFlight = true
                 if let store = ConfigStore.shared {
                     ShelfWindow.shared.revealForFileDrag(store: store)
@@ -373,6 +383,9 @@ final class DragWatcher {
                 mouseDragging = false
                 DropGlow.shared.dragInFlight = false
                 ShelfWindow.shared.fileDragEnded()
+            } else {
+                // Down + up with no drag = a plain click: undo the priming.
+                ShelfWindow.shared.unprimeIfIdle()
             }
         }
     }

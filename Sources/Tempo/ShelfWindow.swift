@@ -14,12 +14,15 @@ final class ShelfWindow {
     private var caughtDrop = false
     /// Quiet 0.2s ticks with no hover/drag; at 40 (~8s) the shelf hides.
     private var idleTicks = 0
-    /// True while the card is parked in view; false while hidden off-screen.
-    /// We never `orderOut` — the panel stays ordered-in the whole time so a
-    /// drag that begins elsewhere still counts it as a valid drop target
-    /// (macOS fixes that list when the drag starts). Hiding just moves it
-    /// far off-screen; revealing slides it back under the icon.
+    /// The card lives in one of three states:
+    ///   parked  — off-screen, invisible; not interacting.
+    ///   primed  — on-screen at its real spot but fully transparent. macOS
+    ///             captures a window's drop region when a drag BEGINS, so the
+    ///             card must already sit where it'll be, at mouse-DOWN, before
+    ///             any drag starts — otherwise it never receives the drop.
+    ///   visible — on-screen and opaque; the glowing card you drop on.
     private var onScreen = false
+    private var visible = false
     private static let parkedOrigin = NSPoint(x: -20000, y: -20000)
 
     /// Build the panel and park it off-screen at launch, so it already
@@ -29,8 +32,22 @@ final class ShelfWindow {
         park()
     }
 
+    /// Mouse button just went down somewhere: place the card at its real
+    /// spot but keep it invisible, so if this becomes a drag it can catch
+    /// the drop. If it turns out to be a plain click, it's parked again
+    /// with nothing ever shown.
+    func prime(store: ConfigStore) {
+        guard !visible else { return }
+        ensurePanel(store: store)
+        guard let panel else { return }
+        onScreen = true
+        position(panel)
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+    }
+
     func toggle(store: ConfigStore) {
-        if onScreen {
+        if visible {
             park()
             return
         }
@@ -49,11 +66,17 @@ final class ShelfWindow {
         show(store: store)
     }
 
+    /// A plain click ended (no drag). If the card is only primed (invisible),
+    /// tuck it away; a visible card is left alone.
+    func unprimeIfIdle() {
+        if onScreen, !visible { park() }
+    }
+
     /// Called ~5×/sec by DragWatcher. Any visible shelf hides itself after
     /// ~8 quiet seconds; hovering it, a drag in flight, or a pressed mouse
     /// button resets the countdown.
     func tickIdle(dragActive: Bool) {
-        guard let panel, onScreen else {
+        guard let panel, visible else {
             idleTicks = 0
             return
         }
@@ -77,7 +100,7 @@ final class ShelfWindow {
     /// fights Mission Control's drag-to-top gesture).
     func revealForFileDrag(store: ConfigStore) {
         caughtDrop = false
-        guard !onScreen else { return }
+        guard !visible else { return }
         autoShown = true
         show(store: store)
     }
@@ -105,6 +128,8 @@ final class ShelfWindow {
     private func park() {
         guard let panel else { return }
         onScreen = false
+        visible = false
+        panel.alphaValue = 0
         panel.setFrameOrigin(Self.parkedOrigin)
     }
 
@@ -150,7 +175,10 @@ final class ShelfWindow {
         ensurePanel(store: store)
         guard let panel else { return }
         onScreen = true
+        visible = true
+        idleTicks = 0
         position(panel)
+        panel.alphaValue = 1
         panel.orderFrontRegardless()
     }
 
