@@ -12,7 +12,8 @@ final class ShelfWindow {
     /// True while the shelf is only up because a file drag brought it up.
     private var autoShown = false
     private var caughtDrop = false
-    private var hideTimer: Timer?
+    /// Quiet 0.2s ticks with no hover/drag; at 40 (~8s) the shelf hides.
+    private var idleTicks = 0
 
     func toggle(store: ConfigStore) {
         if let panel, panel.isVisible {
@@ -20,8 +21,11 @@ final class ShelfWindow {
             return
         }
         autoShown = false
-        hideTimer?.invalidate()
         show(store: store)
+    }
+
+    func hide() {
+        panel?.orderOut(nil)
     }
 
     /// Brings the shelf up (or keeps it up) — used when a file lands on
@@ -29,7 +33,29 @@ final class ShelfWindow {
     func reveal(store: ConfigStore) {
         autoShown = false
         show(store: store)
-        scheduleAutoHide()
+    }
+
+    /// Called ~5×/sec by DragWatcher. Any visible shelf hides itself after
+    /// ~8 quiet seconds; hovering it, a drag in flight, or a pressed mouse
+    /// button resets the countdown.
+    func tickIdle(dragActive: Bool) {
+        guard let panel, panel.isVisible else {
+            idleTicks = 0
+            return
+        }
+        let busy = dragActive
+            || DropGlow.shared.targeted
+            || NSEvent.pressedMouseButtons != 0
+            || panel.frame.insetBy(dx: -20, dy: -20).contains(NSEvent.mouseLocation)
+        if busy {
+            idleTicks = 0
+            return
+        }
+        idleTicks += 1
+        if idleTicks >= 40 {
+            idleTicks = 0
+            panel.orderOut(nil)
+        }
     }
 
     /// A file drag just started somewhere on the Mac: pop the shelf up
@@ -42,35 +68,11 @@ final class ShelfWindow {
         show(store: store)
     }
 
-    /// The drop landed here — stay up a few seconds so you see it stuck,
-    /// then tidy away on a timer (hovering keeps it open).
+    /// The drop landed here — the idle countdown then tidies it away.
     func noteDrop() {
         caughtDrop = true
         autoShown = false
-        scheduleAutoHide()
-    }
-
-    /// Slips away after a few quiet seconds; hovering, a drag in flight,
-    /// or a held mouse button (dragging something out) buys more time.
-    private func scheduleAutoHide(after seconds: TimeInterval = 8) {
-        hideTimer?.invalidate()
-        hideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { ShelfWindow.shared.autoHideFired() }
-            }
-        }
-    }
-
-    private func autoHideFired() {
-        guard let panel, panel.isVisible else { return }
-        let busy = panel.frame.contains(NSEvent.mouseLocation)
-            || DropGlow.shared.targeted
-            || NSEvent.pressedMouseButtons != 0
-        if busy {
-            scheduleAutoHide(after: 3)
-        } else {
-            panel.orderOut(nil)
-        }
+        idleTicks = 0
     }
 
     /// The drag ended. If we auto-appeared and caught nothing, slip away.
@@ -179,6 +181,13 @@ struct ShelfView: View {
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
+                Button { ShelfWindow.shared.hide() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Close the shelf")
             }
             if store.config.shelf.isEmpty {
                 emptyState

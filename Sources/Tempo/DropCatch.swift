@@ -91,6 +91,7 @@ final class FileDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        logDrop(sender.draggingPasteboard, note: "enter")
         onTargeted?(true)
         return .copy
     }
@@ -199,6 +200,7 @@ final class DragWatcher {
     private func tick() {
         let pb = NSPasteboard(name: .drag)
         let mouseIsDown = NSEvent.pressedMouseButtons & 1 == 1
+        ShelfWindow.shared.tickIdle(dragActive: dragActive && mouseIsDown)
         if dragActive {
             if !mouseIsDown {
                 dragActive = false
