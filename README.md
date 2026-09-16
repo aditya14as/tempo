@@ -47,10 +47,13 @@ and just `open dist/Tempo.app`.
     on its due day and an agenda list underneath
   - **Add to Apple Reminders** from the clock popover (asks for Reminders
     access the first time)
-- **Shelf** (tray icon in the panel footer): a small always-on-top window.
-  Drop files or links into it from Finder, VS Code, or a browser, then drag
-  them out into Mail, Slack, anywhere — like a notch shelf. It floats, so
-  it stays open while you go grab things.
+- **Shelf** (tray icon in the panel footer): a small always-on-top window
+  that acts like a notch shelf. **To drop something in**, drag a file or link
+  toward the Tempo menu bar icon — a card lights up right under the icon; let
+  go there and it drops in (you'll hear a soft "pop"). It works from Finder,
+  browsers, VS Code, Zed, and Electron editors like Conductor. Once items are
+  on the Shelf you can drag them back out into Mail, Slack, anywhere. The
+  Shelf floats, so it stays open while you go grab things.
 - Show/hide each row (Today / Week / Month / Year) and pick its style:
   **percent, bar, ring, or dot grid**
 - **Counting basis per period**, with inheritance:
