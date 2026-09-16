@@ -9,19 +9,50 @@ import UniformTypeIdentifiers
 final class ShelfWindow {
     static let shared = ShelfWindow()
     private var panel: NSPanel?
+    /// True while the shelf is only up because a file drag brought it up.
+    private var autoShown = false
+    private var caughtDrop = false
 
     func toggle(store: ConfigStore) {
         if let panel, panel.isVisible {
             panel.orderOut(nil)
             return
         }
+        autoShown = false
         show(store: store)
     }
 
     /// Brings the shelf up (or keeps it up) — used when a file lands on
     /// the menu bar icon so you can see where it went.
     func reveal(store: ConfigStore) {
+        autoShown = false
         show(store: store)
+    }
+
+    /// A file drag just started somewhere on the Mac: pop the shelf up
+    /// so there's a big target to drop on (dropping on the menu bar icon
+    /// fights Mission Control's drag-to-top gesture).
+    func revealForFileDrag(store: ConfigStore) {
+        caughtDrop = false
+        guard panel?.isVisible != true else { return }
+        autoShown = true
+        show(store: store)
+    }
+
+    /// The drop landed here — an auto-shown shelf then stays open.
+    func noteDrop() {
+        caughtDrop = true
+        autoShown = false
+    }
+
+    /// The drag ended. If we auto-appeared and caught nothing, slip away.
+    /// (Small delay: the drop callback can land a beat after mouse-up.)
+    func fileDragEnded() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.autoShown, !self.caughtDrop else { return }
+            self.autoShown = false
+            self.panel?.orderOut(nil)
+        }
     }
 
     private func show(store: ConfigStore) {
@@ -45,6 +76,7 @@ final class ShelfWindow {
             let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 320))
             drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
             drop.onTargeted = { DropGlow.shared.targeted = $0 }
+            drop.onAnyDrop = { ShelfWindow.shared.noteDrop() }
             let hosting = NSHostingView(rootView: ShelfView().environmentObject(store))
             hosting.frame = drop.bounds
             hosting.autoresizingMask = [.width, .height]

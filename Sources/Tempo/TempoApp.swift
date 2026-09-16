@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         // Make the menu bar icon accept dropped files (→ Shelf).
         StatusItemDropper.installWhenReady()
+        // Pop the Shelf up automatically whenever a file drag starts.
+        DragWatcher.shared.start()
     }
 }
 

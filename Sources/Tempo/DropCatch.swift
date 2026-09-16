@@ -40,6 +40,9 @@ final class DropGlow: ObservableObject {
 final class FileDropView: NSView {
     var onDrop: (([URL]) -> Void)?
     var onTargeted: ((Bool) -> Void)?
+    /// Fires the instant anything is dropped, before parsing — lets the
+    /// auto-shown shelf know it caught something and should stay open.
+    var onAnyDrop: (() -> Void)?
     /// When set, plain clicks fall through to the status bar button below.
     weak var forwardClicksTo: NSStatusBarButton?
 
@@ -92,6 +95,7 @@ final class FileDropView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         onTargeted?(false)
+        onAnyDrop?()
         let pb = sender.draggingPasteboard
 
         // 1. Real URLs (Finder, Zed, modern apps).
@@ -133,6 +137,56 @@ final class FileDropView: NSView {
             }
         }
         return false
+    }
+}
+
+// MARK: - Auto-show the Shelf when a file drag starts anywhere
+
+/// Watches the system drag pasteboard (cheap poll, ~5×/sec). When you start
+/// dragging a file in any app, the Shelf pops up top-center so you can drop
+/// there — dropping on the tiny menu bar icon fights Mission Control, this
+/// doesn't. If the drag ends elsewhere, the auto-shown shelf slips away again.
+@MainActor
+final class DragWatcher {
+    static let shared = DragWatcher()
+    private var timer: Timer?
+    private var lastChange = NSPasteboard(name: .drag).changeCount
+    private var dragActive = false
+
+    private static let fileTypes: Set<NSPasteboard.PasteboardType> =
+        Set([.fileURL, NSPasteboard.PasteboardType("NSFilenamesPboardType")]
+            + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
+
+    func start() {
+        guard timer == nil else { return }
+        let timer = Timer(timeInterval: 0.2, repeats: true) { _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { DragWatcher.shared.tick() } }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func tick() {
+        let pb = NSPasteboard(name: .drag)
+        let mouseIsDown = NSEvent.pressedMouseButtons & 1 == 1
+        if dragActive {
+            if !mouseIsDown {
+                dragActive = false
+                ShelfWindow.shared.fileDragEnded()
+            }
+            return
+        }
+        guard pb.changeCount != lastChange else { return }
+        lastChange = pb.changeCount
+        // A fresh drag pasteboard + button held = a drag is in flight.
+        guard mouseIsDown, hasFiles(pb), let store = ConfigStore.shared else { return }
+        dragActive = true
+        ShelfWindow.shared.revealForFileDrag(store: store)
+    }
+
+    private func hasFiles(_ pb: NSPasteboard) -> Bool {
+        guard let types = pb.types else { return false }
+        return types.contains { Self.fileTypes.contains($0) }
     }
 }
 
