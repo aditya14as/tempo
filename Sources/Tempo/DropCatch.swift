@@ -138,55 +138,54 @@ final class FileDropView: NSView {
 
 // MARK: - Make the menu bar icon itself a drop target
 
-/// Sits invisibly inside the menu bar label; once it's on screen it finds
-/// the status bar button it lives in and lays a FileDropView over it.
-/// Dropping a file on the Tempo icon then lands it straight on the Shelf.
-struct StatusItemDropInstaller: NSViewRepresentable {
-    let store: ConfigStore
-
-    func makeNSView(context: Context) -> ProbeView {
-        let view = ProbeView()
-        view.store = store
-        return view
+/// Finds the app's status bar button after launch and lays a FileDropView
+/// over it, so files dropped on the Tempo icon land straight on the Shelf.
+/// (SwiftUI's MenuBarExtra gives no direct handle on the button, so we
+/// look for it among the app's windows — the standard workaround.)
+@MainActor
+enum StatusItemDropper {
+    /// The status item can appear a beat after launch; retry until found.
+    static func installWhenReady(attempts: Int = 40) {
+        guard attempts > 0 else { return }
+        if install() { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            installWhenReady(attempts: attempts - 1)
+        }
     }
 
-    func updateNSView(_ view: ProbeView, context: Context) {
-        view.store = store
-        view.installIfNeeded()
+    /// Safe to call repeatedly — cheap no-op once the overlay is in place.
+    @discardableResult
+    static func install() -> Bool {
+        guard let button = statusButton() else { return false }
+        if let existing = button.subviews.compactMap({ $0 as? FileDropView }).first {
+            existing.frame = button.bounds
+            return true
+        }
+        let drop = FileDropView(frame: button.bounds)
+        drop.autoresizingMask = [.width, .height]
+        drop.forwardClicksTo = button
+        drop.onDrop = { urls in
+            guard let store = ConfigStore.shared else { return }
+            store.addToShelf(urls)
+            ShelfWindow.shared.reveal(store: store)
+        }
+        button.addSubview(drop)
+        return true
     }
 
-    final class ProbeView: NSView {
-        var store: ConfigStore?
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            installIfNeeded()
+    private static func statusButton() -> NSStatusBarButton? {
+        for window in NSApp.windows where window.className.contains("StatusBarWindow") {
+            if let button = findButton(in: window.contentView) { return button }
         }
+        return nil
+    }
 
-        func installIfNeeded() {
-            guard let button = statusButton() else { return }
-            if let existing = button.subviews.compactMap({ $0 as? FileDropView }).first {
-                existing.frame = button.bounds
-                return
-            }
-            let drop = FileDropView(frame: button.bounds)
-            drop.autoresizingMask = [.width, .height]
-            drop.forwardClicksTo = button
-            drop.onDrop = { [weak self] urls in
-                guard let store = self?.store else { return }
-                store.addToShelf(urls)
-                ShelfWindow.shared.reveal(store: store)
-            }
-            button.addSubview(drop)
+    private static func findButton(in view: NSView?) -> NSStatusBarButton? {
+        guard let view else { return nil }
+        if let button = view as? NSStatusBarButton { return button }
+        for sub in view.subviews {
+            if let button = findButton(in: sub) { return button }
         }
-
-        private func statusButton() -> NSStatusBarButton? {
-            var view: NSView? = self
-            while let current = view {
-                if let button = current as? NSStatusBarButton { return button }
-                view = current.superview
-            }
-            return nil
-        }
+        return nil
     }
 }

@@ -4,6 +4,9 @@ import ServiceManagement
 @MainActor
 final class ConfigStore: ObservableObject {
     private static let key = "tempo.config.v1"
+    /// The one live store — lets AppKit-level code (menu bar drop zone)
+    /// reach it without threading it through SwiftUI.
+    private(set) static weak var shared: ConfigStore?
 
     @Published var config: AppConfig {
         didSet {
@@ -20,6 +23,7 @@ final class ConfigStore: ObservableObject {
 
     init() {
         config = Self.load()
+        Self.shared = self
         // The notification's "Mark done" button checks the task off here too.
         ReminderScheduler.shared.activate { [weak self] todoID in
             guard let self, let index = self.config.todos.firstIndex(where: { $0.id == todoID }) else { return }

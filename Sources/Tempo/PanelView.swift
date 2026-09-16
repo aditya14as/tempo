@@ -71,6 +71,9 @@ struct PanelView: View {
         .onAppear {
             store.pruneBlankTodos()
             store.pullAppleReminderCompletions()
+            // Keep the menu bar icon's drop zone alive even if the
+            // status item was rebuilt (e.g. after a style change).
+            StatusItemDropper.install()
         }
     }
 
