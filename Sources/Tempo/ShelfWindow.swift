@@ -163,7 +163,15 @@ struct ShelfView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(spacing: 8) {
+                // Close sits top-left, where every Mac window keeps it.
+                Button { ShelfWindow.shared.hide() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Close the shelf")
                 Text("Shelf")
                     .font(.system(.headline, design: .rounded))
                 if !store.config.shelf.isEmpty {
@@ -181,13 +189,6 @@ struct ShelfView: View {
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
-                Button { ShelfWindow.shared.hide() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .help("Close the shelf")
             }
             if store.config.shelf.isEmpty {
                 emptyState
