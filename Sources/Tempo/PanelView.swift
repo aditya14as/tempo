@@ -33,6 +33,7 @@ struct PanelView: View {
                         )
                     }
                 }
+                TodoSection()
                 footer
             }
             .padding(16)
@@ -81,6 +82,85 @@ struct PanelView: View {
             .help("Quit Tempo")
         }
         .padding(.top, 2)
+    }
+}
+
+/// Up to 5 focus tasks, edited in place and saved with the config.
+struct TodoSection: View {
+    @EnvironmentObject var store: ConfigStore
+
+    var body: some View {
+        let todos = store.config.todos
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Top 5")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                Spacer()
+                if !todos.isEmpty {
+                    Text("\(todos.filter(\.done).count)/\(todos.count) done")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            ForEach(todos) { todo in
+                todoRow(todo)
+            }
+            if todos.count < AppConfig.maxTodos {
+                Button {
+                    store.config.todos.append(TodoItem(text: ""))
+                } label: {
+                    Label("Add a task", systemImage: "plus")
+                        .font(.system(.caption, design: .rounded))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        )
+    }
+
+    private func todoRow(_ todo: TodoItem) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                update(todo.id) { $0.done.toggle() }
+            } label: {
+                Image(systemName: todo.done ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(todo.done
+                        ? AnyShapeStyle(store.config.theme.gradient)
+                        : AnyShapeStyle(Color.secondary))
+            }
+            .buttonStyle(.plain)
+            TextField("What matters today?", text: textBinding(todo.id))
+                .textFieldStyle(.plain)
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(todo.done ? .secondary : .primary)
+            Button {
+                store.config.todos.removeAll { $0.id == todo.id }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.quaternary)
+            }
+            .buttonStyle(.plain)
+            .help("Remove")
+        }
+    }
+
+    private func update(_ id: UUID, _ change: (inout TodoItem) -> Void) {
+        guard let index = store.config.todos.firstIndex(where: { $0.id == id }) else { return }
+        change(&store.config.todos[index])
+    }
+
+    private func textBinding(_ id: UUID) -> Binding<String> {
+        Binding {
+            store.config.todos.first(where: { $0.id == id })?.text ?? ""
+        } set: { text in
+            update(id) { $0.text = text }
+        }
     }
 }
 

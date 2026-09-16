@@ -33,6 +33,9 @@ and just `open dist/Tempo.app`.
 
 - Work start/end times and which days count as workdays — plus **per-day
   hours** (e.g. Friday 10:00–17:00), which day/week/month/year math all honor
+- **Split a day into slots** (up to 4): e.g. 11:00–12:00 and 14:00–15:00 —
+  breaks between slots don't count toward progress
+- **Top 5 tasks** right in the panel: check off your focus items for the day
 - Show/hide each row (Today / Week / Month / Year) and pick its style:
   **percent, bar, ring, or dot grid**
 - **Counting basis per period**, with inheritance:

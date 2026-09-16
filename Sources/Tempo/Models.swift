@@ -14,12 +14,56 @@ enum ProgressMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct DaySchedule: Codable, Equatable {
-    var enabled: Bool
+struct WorkSlot: Codable, Equatable, Identifiable {
+    var id = UUID()
     var startMinute: Int
     var endMinute: Int
 
-    var seconds: Double { enabled ? Double(max(0, endMinute - startMinute)) * 60 : 0 }
+    var seconds: Double { Double(max(0, endMinute - startMinute)) * 60 }
+}
+
+struct DaySchedule: Codable, Equatable {
+    var enabled: Bool
+    /// One or more work windows within the day, e.g. 11:00–12:00 and 14:00–15:00.
+    var slots: [WorkSlot]
+
+    init(enabled: Bool, slots: [WorkSlot]) {
+        self.enabled = enabled
+        self.slots = slots.isEmpty ? [WorkSlot(startMinute: 10 * 60, endMinute: 18 * 60)] : slots
+    }
+
+    init(enabled: Bool, startMinute: Int, endMinute: Int) {
+        self.init(enabled: enabled, slots: [WorkSlot(startMinute: startMinute, endMinute: endMinute)])
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, slots, startMinute, endMinute
+    }
+
+    /// Decodes both shapes: the new slot list, and the old single start/end window.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let enabled = ((try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? nil) ?? true
+        if let decoded = ((try? c.decodeIfPresent([WorkSlot].self, forKey: .slots)) ?? nil), !decoded.isEmpty {
+            self.init(enabled: enabled, slots: decoded)
+        } else {
+            let start = ((try? c.decodeIfPresent(Int.self, forKey: .startMinute)) ?? nil) ?? 10 * 60
+            let end = ((try? c.decodeIfPresent(Int.self, forKey: .endMinute)) ?? nil) ?? 18 * 60
+            self.init(enabled: enabled, startMinute: start, endMinute: end)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(slots, forKey: .slots)
+    }
+
+    var seconds: Double { enabled ? slots.reduce(0) { $0 + $1.seconds } : 0 }
+    /// Earliest slot start — when the workday begins.
+    var startMinute: Int { slots.map(\.startMinute).min() ?? 10 * 60 }
+    /// Latest slot end — when the workday is over.
+    var endMinute: Int { slots.map(\.endMinute).max() ?? 18 * 60 }
 }
 
 struct WorkSchedule: Codable, Equatable {
@@ -194,6 +238,12 @@ struct RowConfig: Codable, Equatable {
     var style: RowStyle = .bar
 }
 
+struct TodoItem: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var text: String
+    var done: Bool = false
+}
+
 struct AppConfig: Codable, Equatable {
     var schedule = WorkSchedule()
     var rowToday = RowConfig(visible: true, style: .ring)
@@ -207,6 +257,10 @@ struct AppConfig: Codable, Equatable {
     var menuBarShows: MenuBarShows = .todayWeek
     var theme: Theme = .aurora
     var launchAtLogin: Bool = false
+    /// Up to 5 focus tasks shown in the panel.
+    var todos: [TodoItem] = []
+
+    static let maxTodos = 5
 
     init() {}
 
@@ -227,6 +281,7 @@ struct AppConfig: Codable, Equatable {
         menuBarShows = (try? c.decodeIfPresent(MenuBarShows.self, forKey: .menuBarShows)) ?? d.menuBarShows ?? d.menuBarShows
         theme = (try? c.decodeIfPresent(Theme.self, forKey: .theme)) ?? d.theme ?? d.theme
         launchAtLogin = (try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)) ?? d.launchAtLogin ?? d.launchAtLogin
+        todos = (try? c.decodeIfPresent([TodoItem].self, forKey: .todos)) ?? d.todos ?? d.todos
     }
 
     func row(_ metric: Metric) -> RowConfig {

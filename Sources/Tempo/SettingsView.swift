@@ -35,7 +35,7 @@ struct SettingsView: View {
                             DatePicker("End", selection: allDaysBinding(\.endMinute), displayedComponents: .hourAndMinute)
                         }
                         .datePickerStyle(.compact)
-                        Text("Sets every workday at once.")
+                        Text("Sets every workday's first slot. Use Per-day hours to split a day into slots.")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                         HStack(spacing: 6) {
@@ -233,22 +233,64 @@ struct SettingsView: View {
 
     private func perDayRow(_ weekday: Int, _ name: String) -> some View {
         let day = store.config.schedule.day(weekday)
-        return HStack(spacing: 8) {
-            Text(name)
-                .font(.system(.caption, design: .rounded))
-                .frame(width: 60, alignment: .leading)
-                .foregroundStyle(day.enabled ? .primary : .tertiary)
-            DatePicker("", selection: dayMinuteBinding(weekday, \.startMinute), displayedComponents: .hourAndMinute)
-                .labelsHidden()
-                .datePickerStyle(.field)
-            Text("–").foregroundStyle(.tertiary)
-            DatePicker("", selection: dayMinuteBinding(weekday, \.endMinute), displayedComponents: .hourAndMinute)
-                .labelsHidden()
-                .datePickerStyle(.field)
-            Spacer(minLength: 0)
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(day.slots.enumerated()), id: \.element.id) { index, _ in
+                HStack(spacing: 8) {
+                    Text(index == 0 ? name : "")
+                        .font(.system(.caption, design: .rounded))
+                        .frame(width: 60, alignment: .leading)
+                        .foregroundStyle(day.enabled ? .primary : .tertiary)
+                    DatePicker("", selection: slotMinuteBinding(weekday, index, \.startMinute), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .datePickerStyle(.field)
+                    Text("–").foregroundStyle(.tertiary)
+                    DatePicker("", selection: slotMinuteBinding(weekday, index, \.endMinute), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .datePickerStyle(.field)
+                    Spacer(minLength: 0)
+                    if index == 0 {
+                        Button { addSlot(weekday) } label: {
+                            Image(systemName: "plus.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .disabled(day.slots.count >= Self.maxSlots)
+                        .help("Split this day: add another time slot")
+                    } else {
+                        Button { removeSlot(weekday, index) } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Remove this slot")
+                    }
+                }
+            }
         }
         .disabled(!day.enabled)
         .opacity(day.enabled ? 1 : 0.5)
+    }
+
+    private static let maxSlots = 4
+
+    private func addSlot(_ weekday: Int) {
+        var schedule = store.config.schedule
+        var day = schedule.day(weekday)
+        guard day.slots.count < Self.maxSlots else { return }
+        let lastEnd = day.slots.map(\.endMinute).max() ?? 18 * 60
+        let start = min(lastEnd + 60, 23 * 60)
+        day.slots.append(WorkSlot(startMinute: start, endMinute: min(start + 60, 24 * 60)))
+        schedule.setDay(weekday, day)
+        store.config.schedule = schedule
+    }
+
+    private func removeSlot(_ weekday: Int, _ index: Int) {
+        var schedule = store.config.schedule
+        var day = schedule.day(weekday)
+        guard day.slots.indices.contains(index), day.slots.count > 1 else { return }
+        day.slots.remove(at: index)
+        schedule.setDay(weekday, day)
+        store.config.schedule = schedule
     }
 
     // MARK: - Bindings
@@ -263,43 +305,50 @@ struct SettingsView: View {
         return (c.hour ?? 0) * 60 + (c.minute ?? 0)
     }
 
-    /// Keeps the window valid after an edit: end must stay after start.
-    private static func validated(_ day: DaySchedule, changed keyPath: WritableKeyPath<DaySchedule, Int>) -> DaySchedule {
-        var day = day
-        if day.endMinute <= day.startMinute {
+    /// Keeps a slot valid after an edit: end must stay after start.
+    private static func validated(_ slot: WorkSlot, changed keyPath: WritableKeyPath<WorkSlot, Int>) -> WorkSlot {
+        var slot = slot
+        if slot.endMinute <= slot.startMinute {
             if keyPath == \.startMinute {
-                day.endMinute = min(day.startMinute + 60, 24 * 60)
+                slot.endMinute = min(slot.startMinute + 60, 24 * 60)
             } else {
-                day.startMinute = max(day.endMinute - 60, 0)
+                slot.startMinute = max(slot.endMinute - 60, 0)
             }
         }
-        return day
+        return slot
     }
 
-    /// Edits one weekday's start or end time.
-    private func dayMinuteBinding(_ weekday: Int, _ keyPath: WritableKeyPath<DaySchedule, Int>) -> Binding<Date> {
+    /// Edits one slot's start or end time on one weekday.
+    private func slotMinuteBinding(_ weekday: Int, _ index: Int, _ keyPath: WritableKeyPath<WorkSlot, Int>) -> Binding<Date> {
         Binding {
-            Self.dateFrom(minutes: store.config.schedule.day(weekday)[keyPath: keyPath])
+            let slots = store.config.schedule.day(weekday).slots
+            guard slots.indices.contains(index) else { return Self.dateFrom(minutes: 10 * 60) }
+            return Self.dateFrom(minutes: slots[index][keyPath: keyPath])
         } set: { date in
             var schedule = store.config.schedule
             var day = schedule.day(weekday)
-            day[keyPath: keyPath] = Self.minutesFrom(date)
-            schedule.setDay(weekday, Self.validated(day, changed: keyPath))
+            guard day.slots.indices.contains(index) else { return }
+            var slot = day.slots[index]
+            slot[keyPath: keyPath] = Self.minutesFrom(date)
+            day.slots[index] = Self.validated(slot, changed: keyPath)
+            schedule.setDay(weekday, day)
             store.config.schedule = schedule
         }
     }
 
-    /// Edits every day's start or end time at once (shows Monday's value).
-    private func allDaysBinding(_ keyPath: WritableKeyPath<DaySchedule, Int>) -> Binding<Date> {
+    /// Edits every day's first slot at once (shows Monday's value).
+    private func allDaysBinding(_ keyPath: WritableKeyPath<WorkSlot, Int>) -> Binding<Date> {
         Binding {
-            Self.dateFrom(minutes: store.config.schedule.day(2)[keyPath: keyPath])
+            Self.dateFrom(minutes: store.config.schedule.day(2).slots.first?[keyPath: keyPath] ?? 10 * 60)
         } set: { date in
             let minutes = Self.minutesFrom(date)
             var schedule = store.config.schedule
             for weekday in 1...7 {
                 var day = schedule.day(weekday)
-                day[keyPath: keyPath] = minutes
-                schedule.setDay(weekday, Self.validated(day, changed: keyPath))
+                guard var slot = day.slots.first else { continue }
+                slot[keyPath: keyPath] = minutes
+                day.slots[0] = Self.validated(slot, changed: keyPath)
+                schedule.setDay(weekday, day)
             }
             store.config.schedule = schedule
         }

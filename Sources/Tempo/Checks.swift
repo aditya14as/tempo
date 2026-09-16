@@ -125,6 +125,47 @@ enum Checks {
         let snap = ProgressEngine.snapshot(.today, now: weekDate(dayOffset: 2, hour: 14, minute: 40), config: AppConfig(), cal: cal)
         expect(snap.subtitle == "3h 20m left", "today subtitle formats time left (got \"\(snap.subtitle)\")")
 
+        // Split-day slots: Monday works 11:00–12:00 and 14:00–15:00 only.
+        var split = schedule
+        split.setDay(2, DaySchedule(enabled: true, slots: [
+            WorkSlot(startMinute: 11 * 60, endMinute: 12 * 60),
+            WorkSlot(startMinute: 14 * 60, endMinute: 15 * 60),
+        ]))
+        expectClose(split.day(2).seconds, 2 * 3600, "split Monday totals 2h")
+        expectClose(
+            ProgressEngine.dayProgress(now: weekDate(dayOffset: 0, hour: 10, minute: 30), schedule: split, cal: cal) ?? -1,
+            0, "before the first slot is 0%"
+        )
+        expectClose(
+            ProgressEngine.dayProgress(now: weekDate(dayOffset: 0, hour: 12, minute: 30), schedule: split, cal: cal) ?? -1,
+            0.5, "the break between slots holds at 50%"
+        )
+        expectClose(
+            ProgressEngine.dayProgress(now: weekDate(dayOffset: 0, hour: 14, minute: 30), schedule: split, cal: cal) ?? -1,
+            0.75, "midway through the second slot is 75%"
+        )
+        expectClose(
+            ProgressEngine.dayProgress(now: weekDate(dayOffset: 0, hour: 16), schedule: split, cal: cal) ?? -1,
+            1, "after the last slot is 100%"
+        )
+        let splitTally = ProgressEngine.workTally(now: wednesday14, from: week.start, to: week.end, schedule: split, cal: cal)
+        expectClose(splitTally.total, 34 * 3600, "split Monday shrinks week to 34h", accuracy: 0.5)
+
+        // Old saved configs (single start/end per day) decode into one slot.
+        let legacyDay = #"{"enabled":true,"startMinute":600,"endMinute":1080}"#.data(using: .utf8)!
+        let migratedDay = try? JSONDecoder().decode(DaySchedule.self, from: legacyDay)
+        expect(migratedDay?.slots.count == 1, "old single-window day decodes into one slot")
+        expectClose(migratedDay?.seconds ?? -1, 8 * 3600, "migrated day keeps its 8 hours")
+
+        // Todos round-trip through the saved config.
+        var todoConfig = AppConfig()
+        todoConfig.todos = [TodoItem(text: "Ship it"), TodoItem(text: "Review PR", done: true)]
+        let encoded = try? JSONEncoder().encode(todoConfig)
+        let restored = encoded.flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
+        expect(restored?.todos.count == 2, "todos survive save and load")
+        expect(restored?.todos.first?.text == "Ship it", "todo text survives save and load")
+        expect(restored?.todos.last?.done == true, "todo done state survives save and load")
+
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1
     }

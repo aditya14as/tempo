@@ -25,12 +25,15 @@ enum ProgressEngine {
         schedule.day(cal.component(.weekday, from: date))
     }
 
-    /// Work seconds elapsed within `now`'s own day, clamped to that day's work window.
+    /// Work seconds elapsed within `now`'s own day, summed over that day's
+    /// slots and clamped to each slot's window (breaks between slots don't count).
     static func elapsedWorkSeconds(now: Date, schedule: WorkSchedule, cal: Calendar) -> Double {
         let day = daySchedule(for: now, schedule: schedule, cal: cal)
         guard day.enabled, day.seconds > 0 else { return 0 }
-        let start = Double(day.startMinute) * 60
-        return min(max(secondsIntoDay(now, cal: cal) - start, 0), day.seconds)
+        let nowSec = secondsIntoDay(now, cal: cal)
+        return day.slots.reduce(0) { done, slot in
+            done + min(max(nowSec - Double(slot.startMinute) * 60, 0), slot.seconds)
+        }
     }
 
     /// Work seconds (done, total) across all workdays in [from, to), honoring
