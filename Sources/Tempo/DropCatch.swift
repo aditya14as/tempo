@@ -343,6 +343,7 @@ final class DragCatcher {
         }
         panel?.setFrame(frame, display: false)
         panel?.orderFrontRegardless()
+        FileDropView.log("catcher shown frame=\(frame)", pasteboard: NSPasteboard(name: .drag))
     }
 
     func hide() {
@@ -422,7 +423,15 @@ final class DragWatcher {
             }
             if !mouseDragging, hypot(here.x - origin.x, here.y - origin.y) > dragSlop {
                 mouseDragging = true
+                // The moment the mouse starts dragging ANYTHING, light the
+                // box up and pop it under the icon — no waiting to read the
+                // file (Conductor/Zed hide it until a drop target asks).
                 DragCatcher.shared.show()
+                DropGlow.shared.dragInFlight = true
+                if let store = ConfigStore.shared {
+                    ShelfWindow.shared.revealForFileDrag(store: store)
+                }
+                FileDropView.log("mousedrag reveal at \(here)", pasteboard: NSPasteboard(name: .drag))
             }
         } else if pressOrigin != nil {
             pressOrigin = nil

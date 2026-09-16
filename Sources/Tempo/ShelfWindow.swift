@@ -140,6 +140,8 @@ final class ShelfWindow {
         }
         x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
+        FileDropView.log("shelf positioned topLeft=(\(x), \(top)) icon=\(String(describing: icon))",
+                         pasteboard: NSPasteboard(name: .drag))
     }
 
     /// The MenuBarExtra popover, if it's currently on screen: a visible app
