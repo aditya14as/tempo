@@ -286,71 +286,6 @@ final class FileDropView: NSView {
     }
 }
 
-// MARK: - Invisible catcher over the icon while the mouse is dragging
-
-/// Some apps (Chromium/Electron: Conductor, VS Code…) start drags with lazy
-/// pasteboard writers — nothing appears on the drag pasteboard until a
-/// drop target asks, so polling it sees nothing. And the status item's own
-/// window doesn't reliably hand drags to views inside it. This sidesteps
-/// both: while the mouse button is held and moving, a transparent panel
-/// sits exactly over the Tempo icon plus a strip just under it. Any drag
-/// that enters pops the shelf; a drop right there lands on the shelf too.
-/// It only exists mid-drag, so it can never steal a click.
-@MainActor
-final class DragCatcher {
-    static let shared = DragCatcher()
-    private var panel: NSPanel?
-
-    /// How far below the menu bar the catch strip reaches.
-    private let stripHeight: CGFloat = 36
-    private let sideMargin: CGFloat = 48
-
-    func show() {
-        guard let icon = StatusItemDropper.iconScreenFrame(), icon.height > 0 else { return }
-        let frame = NSRect(
-            x: icon.minX - sideMargin, y: icon.minY - stripHeight,
-            width: icon.width + sideMargin * 2, height: icon.height + stripHeight
-        )
-        if panel == nil {
-            let panel = NSPanel(
-                contentRect: frame,
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered, defer: false
-            )
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = false
-            // One notch above the status bar, so it wins hit-testing there.
-            panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-            panel.hidesOnDeactivate = false
-            panel.isReleasedWhenClosed = false
-            let drop = FileDropView(frame: NSRect(origin: .zero, size: frame.size))
-            drop.name = "catcher"
-            drop.autoresizingMask = [.width, .height]
-            drop.onTargeted = { entered in
-                guard entered, let store = ConfigStore.shared else { return }
-                DropGlow.shared.dragInFlight = true
-                ShelfWindow.shared.revealForFileDrag(store: store)
-            }
-            drop.onDrop = { urls in
-                guard let store = ConfigStore.shared else { return }
-                store.addToShelf(urls)
-                ShelfWindow.shared.reveal(store: store)
-            }
-            panel.contentView = drop
-            self.panel = panel
-        }
-        panel?.setFrame(frame, display: false)
-        panel?.orderFrontRegardless()
-        FileDropView.log("catcher shown frame=\(frame)", pasteboard: NSPasteboard(name: .drag))
-    }
-
-    func hide() {
-        panel?.orderOut(nil)
-    }
-}
-
 // MARK: - Auto-show the Shelf when a file drag starts anywhere
 
 /// Watches the system drag pasteboard (cheap poll, ~5×/sec). When you start
@@ -424,14 +359,13 @@ final class DragWatcher {
             if !mouseDragging, hypot(here.x - origin.x, here.y - origin.y) > dragSlop {
                 mouseDragging = true
                 // The moment the mouse starts dragging ANYTHING, light the
-                // box up and pop it under the icon — no waiting to read the
-                // file (Conductor/Zed hide it until a drop target asks).
-                DragCatcher.shared.show()
+                // box up so the icon reads as the target. We do NOT float a
+                // catcher over the icon — a window shown mid-drag can't
+                // receive the drop AND it blocks the icon that can.
                 DropGlow.shared.dragInFlight = true
                 if let store = ConfigStore.shared {
                     ShelfWindow.shared.revealForFileDrag(store: store)
                 }
-                FileDropView.log("mousedrag reveal at \(here)", pasteboard: NSPasteboard(name: .drag))
             }
         } else if pressOrigin != nil {
             pressOrigin = nil
@@ -439,9 +373,6 @@ final class DragWatcher {
                 mouseDragging = false
                 DropGlow.shared.dragInFlight = false
                 ShelfWindow.shared.fileDragEnded()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    DragCatcher.shared.hide()
-                }
             }
         }
     }
