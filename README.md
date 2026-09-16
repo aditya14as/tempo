@@ -1,7 +1,10 @@
+<p align="center"><img src="Assets/icon-256.png" width="96" alt="Tempo logo"></p>
+
 # Tempo
 
 A tiny native macOS menu bar app that shows how far you are through your work
-day, week, month, and year — in a glassy, customizable drop-down panel.
+day, week, month, and year — in a glassy, customizable drop-down panel with
+**Now / Tasks / Week** tabs.
 
 Default work schedule: **Mon–Fri, 10:00 → 18:00**. The day hits 0% at 10:00 and
 100% at 18:00; the week runs Monday 10:00 → Friday 18:00 (work hours only).
@@ -36,12 +39,18 @@ and just `open dist/Tempo.app`.
 - **Split a day into slots** (up to 4): e.g. 11:00–12:00 and 14:00–15:00 —
   breaks between slots don't count toward progress
 - **Top 5 tasks** right in the panel: check off your focus items for the day
-  - Give a task a **due date & time** (clock button) — Tempo sends a
-    notification when it's due, and the chip turns red when overdue
-  - **Drag & drop a file or link** onto the list (from Finder, VS Code, a
-    browser…) to make it a task; click the paperclip chip to open it
+  - Give a task a **due date & time** (clock button): one-tap presets
+    (In 2h / Tonight / Tomorrow / Next Mon), a real calendar, and a time
+    stepper — Tempo sends a notification when it's due, and the chip turns
+    red when overdue
+  - **Week tab**: this week + next week at a glance, with each task dotted
+    on its due day and an agenda list underneath
   - **Add to Apple Reminders** from the clock popover (asks for Reminders
     access the first time)
+- **Shelf** (tray icon in the panel footer): a small always-on-top window.
+  Drop files or links into it from Finder, VS Code, or a browser, then drag
+  them out into Mail, Slack, anywhere — like a notch shelf. It floats, so
+  it stays open while you go grab things.
 - Show/hide each row (Today / Week / Month / Year) and pick its style:
   **percent, bar, ring, or dot grid**
 - **Counting basis per period**, with inheritance:

@@ -270,6 +270,30 @@ struct TodoItem: Codable, Equatable, Identifiable {
     }
 }
 
+/// A file or link parked on the floating Shelf, ready to drag somewhere else.
+struct ShelfItem: Codable, Equatable, Identifiable {
+    var id = UUID()
+    /// File path (starts with "/") or a web URL string.
+    var link: String
+    var addedAt: Date = Date()
+
+    var url: URL? {
+        if link.hasPrefix("/") { return URL(fileURLWithPath: link) }
+        return URL(string: link)
+    }
+
+    var name: String {
+        if link.hasPrefix("/") { return (link as NSString).lastPathComponent }
+        return URL(string: link)?.host ?? link
+    }
+
+    var isFile: Bool { link.hasPrefix("/") }
+
+    static func fromDroppedURL(_ url: URL) -> ShelfItem {
+        ShelfItem(link: url.isFileURL ? url.path : url.absoluteString)
+    }
+}
+
 struct AppConfig: Codable, Equatable {
     var schedule = WorkSchedule()
     var rowToday = RowConfig(visible: true, style: .ring)
@@ -285,8 +309,11 @@ struct AppConfig: Codable, Equatable {
     var launchAtLogin: Bool = false
     /// Up to 5 focus tasks shown in the panel.
     var todos: [TodoItem] = []
+    /// Files/links parked on the floating Shelf.
+    var shelf: [ShelfItem] = []
 
     static let maxTodos = 5
+    static let maxShelf = 12
 
     init() {}
 
@@ -308,6 +335,7 @@ struct AppConfig: Codable, Equatable {
         theme = (try? c.decodeIfPresent(Theme.self, forKey: .theme)) ?? d.theme ?? d.theme
         launchAtLogin = (try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)) ?? d.launchAtLogin ?? d.launchAtLogin
         todos = (try? c.decodeIfPresent([TodoItem].self, forKey: .todos)) ?? d.todos ?? d.todos
+        shelf = (try? c.decodeIfPresent([ShelfItem].self, forKey: .shelf)) ?? d.shelf ?? d.shelf
     }
 
     func row(_ metric: Metric) -> RowConfig {

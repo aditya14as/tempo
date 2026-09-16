@@ -7,8 +7,9 @@ swift build -c release
 
 APP="dist/Tempo.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Tempo "$APP/Contents/MacOS/Tempo"
+cp Assets/Tempo.icns "$APP/Contents/Resources/Tempo.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -24,6 +25,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>LSMinimumSystemVersion</key>    <string>14.0</string>
     <key>LSUIElement</key>               <true/>
+    <key>CFBundleIconFile</key>          <string>Tempo</string>
     <key>NSRemindersUsageDescription</key>
     <string>Tempo adds your tasks to Apple Reminders when you ask it to.</string>
     <key>NSRemindersFullAccessUsageDescription</key>

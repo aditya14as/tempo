@@ -43,6 +43,58 @@ enum DueFormat {
     static func triggerComponents(_ due: Date, cal: Calendar = .current) -> DateComponents {
         cal.dateComponents([.year, .month, .day, .hour, .minute], from: due)
     }
+
+    /// Tasks due on one specific day, soonest first.
+    static func tasks(_ todos: [TodoItem], dueOn day: Date, cal: Calendar) -> [TodoItem] {
+        todos
+            .filter { $0.dueDate.map { cal.isDate($0, inSameDayAs: day) } ?? false }
+            .sorted { ($0.dueDate ?? .distantPast) < ($1.dueDate ?? .distantPast) }
+    }
+
+    /// All dated tasks, soonest first — feeds the Week tab's agenda list.
+    static func agenda(_ todos: [TodoItem]) -> [TodoItem] {
+        todos.filter { $0.dueDate != nil }
+            .sorted { ($0.dueDate ?? .distantPast) < ($1.dueDate ?? .distantPast) }
+    }
+}
+
+// MARK: - One-tap due choices (pure, covered by --check)
+
+enum QuickDue {
+    /// Two hours out, snapped up to the next quarter hour.
+    static func inTwoHours(_ now: Date, cal: Calendar) -> Date {
+        let raw = now.addingTimeInterval(2 * 3600)
+        let minute = cal.component(.minute, from: raw)
+        let snap = (15 - minute % 15) % 15
+        let snapped = raw.addingTimeInterval(Double(snap) * 60)
+        // Drop stray seconds so the label reads clean.
+        let c = cal.dateComponents([.year, .month, .day, .hour, .minute], from: snapped)
+        return cal.date(from: c) ?? snapped
+    }
+
+    /// Today at 18:00.
+    static func tonight(_ now: Date, cal: Calendar) -> Date {
+        cal.date(bySettingHour: 18, minute: 0, second: 0, of: now) ?? now
+    }
+
+    /// Tomorrow when that day's work starts (10:00 when the day is off).
+    static func tomorrowMorning(_ now: Date, schedule: WorkSchedule, cal: Calendar) -> Date {
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: now) ?? now
+        let day = schedule.day(cal.component(.weekday, from: tomorrow))
+        let minute = day.enabled ? day.startMinute : 10 * 60
+        return cal.date(bySettingHour: minute / 60, minute: minute % 60, second: 0, of: tomorrow) ?? tomorrow
+    }
+
+    /// Next week's Monday at that day's work start.
+    static func nextMonday(_ now: Date, schedule: WorkSchedule, cal: Calendar) -> Date {
+        var day = cal.startOfDay(for: now)
+        repeat {
+            day = cal.date(byAdding: .day, value: 1, to: day) ?? day
+        } while cal.component(.weekday, from: day) != 2
+        let sched = schedule.day(2)
+        let minute = sched.enabled ? sched.startMinute : 10 * 60
+        return cal.date(bySettingHour: minute / 60, minute: minute % 60, second: 0, of: day) ?? day
+    }
 }
 
 // MARK: - Local notifications when a task comes due

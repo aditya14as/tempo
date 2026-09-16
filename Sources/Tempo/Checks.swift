@@ -236,6 +236,59 @@ enum Checks {
         )
         expect(fullBack?.todos.first?.link == "/tmp/report.pdf", "attachment survives save and load")
 
+        // One-tap due presets.
+        expect(
+            QuickDue.tonight(wedNow, cal: cal) == exact(2026, 5, 13, 18, 0),
+            "Tonight preset lands on today 18:00"
+        )
+        expect(
+            QuickDue.tomorrowMorning(wedNow, schedule: schedule, cal: cal) == exact(2026, 5, 14, 10, 0),
+            "Tomorrow preset lands on tomorrow's work start"
+        )
+        expect(
+            QuickDue.nextMonday(wedNow, schedule: schedule, cal: cal) == exact(2026, 5, 18, 10, 0),
+            "Next Monday preset lands on Mon 18 May 10:00"
+        )
+        expect(
+            QuickDue.inTwoHours(exact(2026, 5, 13, 14, 0), cal: cal) == exact(2026, 5, 13, 16, 0),
+            "In-2h preset from a round hour stays round"
+        )
+        expect(
+            QuickDue.inTwoHours(exact(2026, 5, 13, 14, 7), cal: cal) == exact(2026, 5, 13, 16, 15),
+            "In-2h preset snaps up to the next quarter hour"
+        )
+
+        // Week glance: tasks group onto their due day, agenda sorts by time.
+        let glancePool = [
+            TodoItem(text: "late", dueDate: exact(2026, 5, 14, 16, 0)),
+            TodoItem(text: "early", dueDate: exact(2026, 5, 14, 9, 0)),
+            TodoItem(text: "other day", dueDate: exact(2026, 5, 15, 9, 0)),
+            TodoItem(text: "undated"),
+        ]
+        let thursday = DueFormat.tasks(glancePool, dueOn: exact(2026, 5, 14, 0, 0), cal: cal)
+        expect(
+            thursday.map(\.text) == ["early", "late"],
+            "a day's tasks filter to that day and sort by time"
+        )
+        expect(
+            DueFormat.agenda(glancePool).map(\.text) == ["early", "late", "other day"],
+            "agenda lists only dated tasks, soonest first"
+        )
+
+        // Shelf items: file vs link mapping, and they survive save and load.
+        let shelfFile = ShelfItem.fromDroppedURL(URL(fileURLWithPath: "/tmp/deck.key"))
+        expect(shelfFile.isFile && shelfFile.name == "deck.key", "shelf file keeps path and short name")
+        let shelfLink = ShelfItem.fromDroppedURL(URL(string: "https://github.com/aditya14as/tempo")!)
+        expect(!shelfLink.isFile && shelfLink.name == "github.com", "shelf link keeps URL and site name")
+        var shelfConfig = AppConfig()
+        shelfConfig.shelf = [shelfFile, shelfLink]
+        let shelfData = try? JSONEncoder().encode(shelfConfig)
+        let shelfBack = shelfData.flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
+        expect(
+            shelfBack?.shelf.map(\.link) == ["/tmp/deck.key", "https://github.com/aditya14as/tempo"],
+            "shelf survives save and load"
+        )
+
         // Yesterday's saved todos (no due/link fields) still decode.
         let oldTodo = #"{"id":"6F1C1C1E-2A2B-4C4D-8E8F-101112131415","text":"old","done":false}"#.data(using: .utf8)!
         let decodedOld = try? JSONDecoder().decode(TodoItem.self, from: oldTodo)

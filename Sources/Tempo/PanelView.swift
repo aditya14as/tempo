@@ -1,8 +1,29 @@
 import SwiftUI
 
+enum PanelTab: String, CaseIterable, Identifiable {
+    case now, tasks, week
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .now: return "Now"
+        case .tasks: return "Tasks"
+        case .week: return "Week"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .now: return "gauge.with.needle"
+        case .tasks: return "checklist"
+        case .week: return "calendar"
+        }
+    }
+}
+
 struct PanelView: View {
     @EnvironmentObject var store: ConfigStore
     @State private var showSettings = false
+    @State private var tab: PanelTab = .now
 
     var body: some View {
         Group {
@@ -21,23 +42,57 @@ struct PanelView: View {
             let config = store.config
             VStack(alignment: .leading, spacing: 14) {
                 header(now: now)
-                ForEach(Metric.allCases) { metric in
-                    if config.row(metric).visible {
-                        MetricRowView(
-                            metric: metric,
-                            snapshot: ProgressEngine.snapshot(metric, now: now, config: config),
-                            style: config.row(metric).style,
-                            theme: config.theme,
-                            config: config,
-                            now: now
-                        )
+                tabBar
+                switch tab {
+                case .now:
+                    ForEach(Metric.allCases) { metric in
+                        if config.row(metric).visible {
+                            MetricRowView(
+                                metric: metric,
+                                snapshot: ProgressEngine.snapshot(metric, now: now, config: config),
+                                style: config.row(metric).style,
+                                theme: config.theme,
+                                config: config,
+                                now: now
+                            )
+                        }
                     }
+                case .tasks:
+                    TodoSection(now: now)
+                case .week:
+                    WeekGlance(now: now)
                 }
-                TodoSection(now: now)
                 footer
             }
             .padding(16)
         }
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(PanelTab.allCases) { t in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { tab = t }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: t.icon).font(.system(size: 10))
+                        Text(t.label)
+                    }
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        Capsule().fill(tab == t
+                            ? AnyShapeStyle(store.config.theme.gradient)
+                            : AnyShapeStyle(Color.clear))
+                    )
+                    .foregroundStyle(tab == t ? .white : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(Color.primary.opacity(0.045)))
     }
 
     private func header(now: Date) -> some View {
@@ -69,6 +124,16 @@ struct PanelView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .help("Settings")
+
+            Button {
+                ShelfWindow.shared.toggle(store: store)
+            } label: {
+                Image(systemName: "tray.full.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(.leading, 12)
+            .help("Shelf — a floating drop zone for files")
 
             Spacer()
 
@@ -114,7 +179,7 @@ struct TodoSection: View {
                 Button {
                     store.config.todos.append(TodoItem(text: ""))
                 } label: {
-                    Label(dropTargeted ? "Drop to add" : "Add a task — or drop a file here",
+                    Label(dropTargeted ? "Drop to add" : "Add a task — for file drops, open the Shelf (tray icon below)",
                           systemImage: dropTargeted ? "arrow.down.circle" : "plus")
                         .font(.system(.caption, design: .rounded))
                 }
@@ -195,6 +260,14 @@ struct TodoSection: View {
                             chip(icon: "paperclip", text: name, tint: .secondary)
                         }
                         .buttonStyle(.plain)
+                        .onDrag {
+                            if let link = todo.link, link.hasPrefix("/"),
+                                let provider = NSItemProvider(contentsOf: URL(fileURLWithPath: link)) {
+                                return provider
+                            }
+                            if let url = todo.linkURL { return NSItemProvider(object: url as NSURL) }
+                            return NSItemProvider()
+                        }
                         .help(todo.link ?? "")
                     }
                 }
@@ -256,20 +329,46 @@ struct TodoSection: View {
     }
 }
 
-/// Date + time picker for a task, plus export to the Apple Reminders app.
+/// Due picker: one-tap presets, a real calendar, a time stepper,
+/// and export to the Apple Reminders app.
 struct DuePopover: View {
     @EnvironmentObject var store: ConfigStore
     var todoID: UUID
     @State private var status: String?
 
+    private var cal: Calendar { Calendar.current }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            DatePicker("Due", selection: dueBinding, displayedComponents: [.date, .hourAndMinute])
-                .datePickerStyle(.field)
-                .font(.system(.subheadline, design: .rounded))
-            Text("Tempo notifies you at this time.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            Text("Remind me")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .kerning(1)
+            HStack(spacing: 6) {
+                quickChip("In 2h") { QuickDue.inTwoHours($0, cal: cal) }
+                quickChip("Tonight") { QuickDue.tonight($0, cal: cal) }
+                quickChip("Tomorrow") { QuickDue.tomorrowMorning($0, schedule: store.config.schedule, cal: cal) }
+                quickChip("Next Mon") { QuickDue.nextMonday($0, schedule: store.config.schedule, cal: cal) }
+            }
+            DatePicker("", selection: dayBinding, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+            HStack {
+                Text("At")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+                DatePicker("", selection: timeBinding, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.stepperField)
+                    .labelsHidden()
+                Spacer()
+                if let due = currentDue {
+                    Text(DueFormat.label(due, now: Date(), cal: cal))
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(store.config.theme.gradient)
+                }
+            }
+            Divider()
             HStack {
                 Button("Clear") {
                     update { $0.dueDate = nil }
@@ -291,20 +390,185 @@ struct DuePopover: View {
             }
         }
         .padding(12)
-        .frame(width: 260)
+        .frame(width: 280)
     }
 
-    private var dueBinding: Binding<Date> {
+    private func quickChip(_ label: String, _ make: @escaping (Date) -> Date) -> some View {
+        let due = make(Date())
+        let selected = currentDue.map { abs($0.timeIntervalSince(due)) < 60 } ?? false
+        return Button {
+            update { $0.dueDate = make(Date()) }
+        } label: {
+            Text(label)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(selected
+                        ? AnyShapeStyle(store.config.theme.gradient)
+                        : AnyShapeStyle(Color.primary.opacity(0.07)))
+                )
+                .foregroundStyle(selected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var currentDue: Date? {
+        store.config.todos.first(where: { $0.id == todoID })?.dueDate
+    }
+
+    /// Calendar picks the day; the task's time of day is kept.
+    private var dayBinding: Binding<Date> {
         Binding {
-            store.config.todos.first(where: { $0.id == todoID })?.dueDate ?? Date()
-        } set: { date in
-            update { $0.dueDate = date }
+            currentDue ?? Date()
+        } set: { picked in
+            let old = currentDue ?? Date()
+            let time = cal.dateComponents([.hour, .minute], from: old)
+            var merged = cal.dateComponents([.year, .month, .day], from: picked)
+            merged.hour = time.hour
+            merged.minute = time.minute
+            update { $0.dueDate = cal.date(from: merged) ?? picked }
+        }
+    }
+
+    /// Stepper picks the time; the task's day is kept.
+    private var timeBinding: Binding<Date> {
+        Binding {
+            currentDue ?? Date()
+        } set: { picked in
+            let old = currentDue ?? Date()
+            var merged = cal.dateComponents([.year, .month, .day], from: old)
+            let time = cal.dateComponents([.hour, .minute], from: picked)
+            merged.hour = time.hour
+            merged.minute = time.minute
+            update { $0.dueDate = cal.date(from: merged) ?? picked }
         }
     }
 
     private func update(_ change: (inout TodoItem) -> Void) {
         guard let index = store.config.todos.firstIndex(where: { $0.id == todoID }) else { return }
         change(&store.config.todos[index])
+    }
+}
+
+/// This week + next week at a glance: tasks sit on their due day.
+struct WeekGlance: View {
+    @EnvironmentObject var store: ConfigStore
+    var now: Date
+
+    private var cal: Calendar { ProgressEngine.mondayCalendar }
+
+    var body: some View {
+        let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start ?? now
+        VStack(alignment: .leading, spacing: 12) {
+            weekRow("This week", start: weekStart)
+            weekRow("Next week", start: cal.date(byAdding: .day, value: 7, to: weekStart) ?? weekStart)
+            agenda
+        }
+    }
+
+    private func weekRow(_ title: String, start: Date) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .kerning(1)
+            HStack(spacing: 5) {
+                ForEach(0..<7, id: \.self) { offset in
+                    dayCell(cal.date(byAdding: .day, value: offset, to: start) ?? start)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        )
+    }
+
+    private func dayCell(_ day: Date) -> some View {
+        let tasks = DueFormat.tasks(store.config.todos, dueOn: day, cal: cal)
+        let isToday = cal.isDate(day, inSameDayAs: now)
+        let hasOverdue = tasks.contains { DueFormat.isOverdue($0.dueDate ?? now, now: now, done: $0.done) }
+        let weekdayIndex = (cal.component(.weekday, from: day) + 5) % 7  // 0 = Monday
+        let letters = ["M", "T", "W", "T", "F", "S", "S"]
+        return VStack(spacing: 3) {
+            Text(letters[weekdayIndex])
+                .font(.system(size: 8, design: .rounded).weight(.bold))
+                .foregroundStyle(.tertiary)
+            Text("\(cal.component(.day, from: day))")
+                .font(.system(.caption, design: .rounded).weight(isToday ? .bold : .regular))
+                .foregroundStyle(isToday ? .primary : .secondary)
+            HStack(spacing: 2) {
+                if tasks.isEmpty {
+                    Circle().fill(Color.clear).frame(width: 4, height: 4)
+                } else {
+                    ForEach(tasks.prefix(3)) { task in
+                        Circle()
+                            .fill(task.done
+                                ? AnyShapeStyle(Color.secondary.opacity(0.4))
+                                : hasOverdue && DueFormat.isOverdue(task.dueDate ?? now, now: now, done: task.done)
+                                    ? AnyShapeStyle(Color.red)
+                                    : AnyShapeStyle(store.config.theme.gradient))
+                            .frame(width: 4, height: 4)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isToday ? Color.primary.opacity(0.08) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    isToday ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.clear),
+                    lineWidth: 1
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var agenda: some View {
+        let dated = DueFormat.agenda(store.config.todos)
+        if dated.isEmpty {
+            Text("No dated tasks yet. Give a task a due time in the Tasks tab and it lands here.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 4)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(dated) { task in
+                    let due = task.dueDate ?? now
+                    let overdue = DueFormat.isOverdue(due, now: now, done: task.done)
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(task.done
+                                ? AnyShapeStyle(Color.secondary.opacity(0.4))
+                                : overdue ? AnyShapeStyle(Color.red) : AnyShapeStyle(store.config.theme.gradient))
+                            .frame(width: 6, height: 6)
+                        Text(task.text.isEmpty ? "Untitled" : task.text)
+                            .font(.system(.caption, design: .rounded))
+                            .strikethrough(task.done)
+                            .foregroundStyle(task.done ? .secondary : .primary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(DueFormat.label(due, now: now, cal: cal))
+                            .font(.system(.caption2, design: .rounded))
+                            .foregroundStyle(overdue ? .red : .secondary)
+                    }
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.primary.opacity(0.045))
+            )
+        }
     }
 }
 
