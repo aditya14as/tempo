@@ -22,8 +22,8 @@ enum PanelTab: String, CaseIterable, Identifiable {
 
 struct PanelView: View {
     @EnvironmentObject var store: ConfigStore
-    @State private var showSettings = false
-    @State private var tab: PanelTab = .now
+    @ViewState private var showSettings = false
+    @ViewState private var tab: PanelTab = .now
 
     var body: some View {
         Group {
@@ -166,8 +166,8 @@ struct PanelView: View {
 struct TodoSection: View {
     @EnvironmentObject var store: ConfigStore
     var now: Date
-    @State private var duePopover: UUID?
-    @State private var dropTargeted = false
+    @ViewState private var duePopover: UUID?
+    @ViewState private var dropTargeted = false
 
     var body: some View {
         let todos = store.config.todos
@@ -351,7 +351,7 @@ struct TodoSection: View {
 struct DuePopover: View {
     @EnvironmentObject var store: ConfigStore
     var todoID: UUID
-    @State private var status: String?
+    @ViewState private var status: String?
 
     private var cal: Calendar { Calendar.current }
 
@@ -476,7 +476,7 @@ struct DuePopover: View {
 struct WeekGlance: View {
     @EnvironmentObject var store: ConfigStore
     var now: Date
-    @State private var selectedDay: Date?
+    @ViewState private var selectedDay: Date?
 
     private var cal: Calendar { ProgressEngine.mondayCalendar }
 

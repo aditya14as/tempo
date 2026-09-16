@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var store: ConfigStore
     var onBack: () -> Void
-    @State private var showPerDayHours = false
+    @ViewState private var showPerDayHours = false
 
     private static let dayOrder: [(weekday: Int, chip: String, name: String)] = [
         (2, "M", "Monday"), (3, "T", "Tuesday"), (4, "W", "Wednesday"), (5, "T", "Thursday"),

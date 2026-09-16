@@ -12,9 +12,18 @@ Month and year can each count either work hours or plain calendar time.
 
 ## Install
 
-You need macOS 14+ and Swift. If you don't have Swift, run
-`xcode-select --install` once (the free Command Line Tools are enough — no
-Xcode needed).
+One line, macOS 14+:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aditya14as/tempo/main/install.sh | bash
+```
+
+It builds Tempo from source with the free Apple Command Line Tools (no Xcode
+needed), copies it to /Applications, and launches it. If you don't have the
+Command Line Tools yet, the script asks macOS to install them — click Install
+in the dialog, then run the line again. Re-run it any time to update.
+
+Prefer to do it by hand?
 
 ```sh
 git clone https://github.com/aditya14as/tempo.git
@@ -79,3 +88,9 @@ swift run Tempo                 # run the app directly (no bundle)
 Self-checks live in `Sources/Tempo/Checks.swift` (Command Line Tools ship no
 XCTest, so tests are a `--check` flag on the binary). To quit the app, click
 the menu bar item and press the power button in the panel footer.
+
+Write `@ViewState` wherever you'd normally write `@State`. The macOS 27 SDK
+turns `@State` into a compiler macro whose plugin ships only with Xcode, so
+plain `@State` no longer builds with the Command Line Tools;
+`Sources/Tempo/ViewState.swift` is a thin wrapper over SwiftUI's `State` that
+does.
