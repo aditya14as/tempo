@@ -112,13 +112,11 @@ enum DropPayload {
     }
 }
 
-/// Lights up the shelf border while a drag hovers over it (`targeted`) or
-/// is in flight anywhere on screen (`dragInFlight`).
+/// Lights up the shelf border while a drag hovers over it.
 @MainActor
 final class DropGlow: ObservableObject {
     static let shared = DropGlow()
     @Published var targeted = false
-    @Published var dragInFlight = false
 }
 
 // MARK: - An AppKit drop target that accepts far more than SwiftUI's does
@@ -129,6 +127,12 @@ final class DropGlow: ObservableObject {
 final class FileDropView: NSView {
     /// Which drop zone this is, for the log ("shelf", "icon", "catcher").
     var name = "view"
+    /// When true, mouse clicks fall through to whatever is behind the window
+    /// (the "glass view" trick), yet drags are still delivered — a view
+    /// registered for dragged types receives them regardless of hitTest.
+    /// Lets the shelf sit on-screen permanently, invisible and click-through,
+    /// so it can catch a drag the moment one passes over it.
+    var passesClicksThrough = false
     var onDrop: (([URL]) -> Void)?
     var onTargeted: ((Bool) -> Void)?
     /// Fires the instant anything is dropped, before parsing — lets the
@@ -185,6 +189,13 @@ final class FileDropView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Returning nil hands the click to the window behind us; drags are
+        // unaffected (they go to registered views, not via hitTest).
+        if passesClicksThrough { return nil }
+        return super.hitTest(point)
+    }
 
     // Clicks pass straight through to the menu bar button (so the panel
     // still opens normally); only drags are handled here.
@@ -286,113 +297,24 @@ final class FileDropView: NSView {
     }
 }
 
-// MARK: - Auto-show the Shelf when a file drag starts anywhere
+// MARK: - Keep the Shelf card placed and tidy
 
-/// Watches the system drag pasteboard (cheap poll, ~5×/sec). When you start
-/// dragging a file in any app, the Shelf pops up top-center so you can drop
-/// there — dropping on the tiny menu bar icon fights Mission Control, this
-/// doesn't. If the drag ends elsewhere, the auto-shown shelf slips away again.
+/// The card catches drops on its own — it sits under the icon at all times,
+/// invisible and click-through, and lights up when a drag crosses it (no
+/// polling, no global monitors, no permissions). This just nudges it back
+/// under the icon if the menu bar shifts and dims it after it's been opened.
 @MainActor
 final class DragWatcher {
     static let shared = DragWatcher()
     private var timer: Timer?
-    private var mouseMonitor: Any?
-    private var lastChange = NSPasteboard(name: .drag).changeCount
-    private var dragActive = false
-    /// Where the button went down; a move past `dragSlop` from here means
-    /// the mouse is dragging *something* — time to light the card up.
-    private var pressOrigin: NSPoint?
-    private var mouseDragging = false
-    private let dragSlop: CGFloat = 8
-
-    private static let fileTypes: Set<NSPasteboard.PasteboardType> =
-        Set([.fileURL, .URL, DropPayload.legacyPaths,
-             NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
-             NSPasteboard.PasteboardType("Apple files promise pasteboard type")]
-            + FileDropView.chromiumTypes
-            + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
     func start() {
         guard timer == nil else { return }
-        // Fires the instant the button goes down in ANY other app (Conductor,
-        // Zed, Finder…). We place the card at its real spot right then — while
-        // still invisible — because macOS locks a window's drop region when
-        // the drag begins; arriving even a frame late means the card never
-        // catches the drop. Mouse monitors need no accessibility permission.
-        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { _ in
-            MainActor.assumeIsolated {
-                guard let store = ConfigStore.shared else { return }
-                DragWatcher.shared.pressOrigin = NSEvent.mouseLocation
-                ShelfWindow.shared.prime(store: store)
-            }
-        }
-        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { DragWatcher.shared.tick() } }
+        let timer = Timer(timeInterval: 0.2, repeats: true) { _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { ShelfWindow.shared.tickIdle(dragActive: false) } }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
-    }
-
-    private func tick() {
-        let pb = NSPasteboard(name: .drag)
-        let mouseIsDown = NSEvent.pressedMouseButtons & 1 == 1
-        ShelfWindow.shared.tickIdle(dragActive: (dragActive || mouseDragging) && mouseIsDown)
-        trackMouseDrag(mouseIsDown: mouseIsDown)
-        if dragActive {
-            if !mouseIsDown {
-                dragActive = false
-                DropGlow.shared.dragInFlight = false
-                ShelfWindow.shared.fileDragEnded()
-            }
-            return
-        }
-        guard pb.changeCount != lastChange else { return }
-        lastChange = pb.changeCount
-        // A fresh drag pasteboard + button held = a drag is in flight.
-        guard mouseIsDown, let types = pb.types, !types.isEmpty else { return }
-        // Whatever this app calls its drag data, accept it from now on.
-        FileDropView.acceptAlso(types)
-        FileDropView.log("dragstart", pasteboard: pb)
-        guard hasFiles(pb), let store = ConfigStore.shared else { return }
-        dragActive = true
-        DropGlow.shared.dragInFlight = true
-        ShelfWindow.shared.revealForFileDrag(store: store)
-    }
-
-    /// Pasteboard-free drag detection: button held + moved = dragging.
-    /// The card is already primed (placed, invisible) from the mouse-down
-    /// monitor; here we just FADE IT IN once real dragging is under way, and
-    /// tuck it away on release.
-    private func trackMouseDrag(mouseIsDown: Bool) {
-        if mouseIsDown {
-            let here = NSEvent.mouseLocation
-            guard let origin = pressOrigin else {
-                pressOrigin = here
-                return
-            }
-            if !mouseDragging, hypot(here.x - origin.x, here.y - origin.y) > dragSlop {
-                mouseDragging = true
-                DropGlow.shared.dragInFlight = true
-                if let store = ConfigStore.shared {
-                    ShelfWindow.shared.revealForFileDrag(store: store)
-                }
-            }
-        } else if pressOrigin != nil {
-            pressOrigin = nil
-            if mouseDragging {
-                mouseDragging = false
-                DropGlow.shared.dragInFlight = false
-                ShelfWindow.shared.fileDragEnded()
-            } else {
-                // Down + up with no drag = a plain click: undo the priming.
-                ShelfWindow.shared.unprimeIfIdle()
-            }
-        }
-    }
-
-    private func hasFiles(_ pb: NSPasteboard) -> Bool {
-        guard let types = pb.types else { return false }
-        return types.contains { Self.fileTypes.contains($0) }
     }
 }
 

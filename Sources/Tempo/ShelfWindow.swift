@@ -9,84 +9,94 @@ import UniformTypeIdentifiers
 final class ShelfWindow {
     static let shared = ShelfWindow()
     private var panel: NSPanel?
-    /// True while the shelf is only up because a file drag brought it up.
-    private var autoShown = false
-    private var caughtDrop = false
-    /// Quiet 0.2s ticks with no hover/drag; at 40 (~8s) the shelf hides.
+    private weak var dropView: FileDropView?
+    /// True while the card is opaque because the user opened it or it just
+    /// caught a drop (versus merely lit up under a passing drag).
+    private var open = false
+    /// Quiet 0.2s ticks; after ~8s an opened card dims back to invisible.
     private var idleTicks = 0
-    /// The card lives in one of three states:
-    ///   parked  — off-screen, invisible; not interacting.
-    ///   primed  — on-screen at its real spot but fully transparent. macOS
-    ///             captures a window's drop region when a drag BEGINS, so the
-    ///             card must already sit where it'll be, at mouse-DOWN, before
-    ///             any drag starts — otherwise it never receives the drop.
-    ///   visible — on-screen and opaque; the glowing card you drop on.
-    private var onScreen = false
-    private var visible = false
-    private static let parkedOrigin = NSPoint(x: -20000, y: -20000)
+    /// The card is ALWAYS on-screen, at 2% opacity and click-through when
+    /// idle. Being a drop target is passive — a registered, visible window
+    /// receives drags with no special permission and no timing games — so
+    /// leaving it parked in place (invisible, letting clicks pass through)
+    /// means it catches a drag the instant one crosses it. Full opacity is
+    /// only for when there's something to look at.
+    private static let idleAlpha: CGFloat = 0.02
 
-    /// Build the panel and park it off-screen at launch, so it already
-    /// exists (and is a legal drop target) before any drag begins.
+    /// Build the card and leave it sitting under the icon, invisible.
     func prewarm(store: ConfigStore) {
         ensurePanel(store: store)
-        park()
+        goIdle()
     }
 
-    /// Mouse button just went down somewhere: place the card at its real
-    /// spot but keep it invisible, so if this becomes a drag it can catch
-    /// the drop. If it turns out to be a plain click, it's parked again
-    /// with nothing ever shown.
-    func prime(store: ConfigStore) {
-        guard !visible else { return }
-        ensurePanel(store: store)
-        guard let panel else { return }
-        onScreen = true
+    /// The card's live drop area, so callers (idle timer) can reposition it
+    /// if the icon shifts.
+    func reposition() {
+        guard let panel, !open else { return }
         position(panel)
-        // Near-invisible, but NOT zero: a fully transparent window is skipped
-        // by drag hit-testing, so it would never receive the drop. 2% opacity
-        // is imperceptible yet keeps the card a legal drop target from the
-        // instant the mouse goes down.
-        panel.alphaValue = 0.02
-        panel.orderFrontRegardless()
     }
 
     func toggle(store: ConfigStore) {
-        if visible {
-            park()
-            return
+        if open {
+            goIdle()
+        } else {
+            showOpen(store: store)
         }
-        autoShown = false
-        show(store: store)
     }
 
     func hide() {
-        park()
+        goIdle()
     }
 
-    /// Brings the shelf up (or keeps it up) — used when a file lands on
-    /// the menu bar icon so you can see where it went.
+    /// Show the card opaque and interactive — used when the user opens it or
+    /// a file just landed on the menu bar icon.
     func reveal(store: ConfigStore) {
-        autoShown = false
-        show(store: store)
+        showOpen(store: store)
     }
 
-    /// A plain click ended (no drag). If the card is only primed (invisible),
-    /// tuck it away; a visible card is left alone.
-    func unprimeIfIdle() {
-        if onScreen, !visible { park() }
+    /// Legacy name kept for callers: same as reveal.
+    func revealForFileDrag(store: ConfigStore) {
+        // A passing drag lights the card up via `dragHover`; nothing to do
+        // here anymore, but keep the entry point so old call sites compile.
     }
 
-    /// Called ~5×/sec by DragWatcher. Any visible shelf hides itself after
-    /// ~8 quiet seconds; hovering it, a drag in flight, or a pressed mouse
-    /// button resets the countdown.
+    /// A drag is now hovering the card: make it fully visible so the drop
+    /// target is obvious. It stays click-through (a drag isn't a click).
+    func dragHover(_ entered: Bool) {
+        guard let panel else { return }
+        DropGlow.shared.targeted = entered
+        if entered {
+            panel.alphaValue = 1
+            idleTicks = 0
+        } else if !open {
+            panel.alphaValue = Self.idleAlpha
+        }
+    }
+
+    /// A drop landed: keep the card visible and interactive so you can see
+    /// what you caught and drag it back out; the idle timer dims it later.
+    func noteDrop() {
+        open = true
+        idleTicks = 0
+        guard let panel else { return }
+        panel.alphaValue = 1
+        dropView?.passesClicksThrough = false
+    }
+
+    func fileDragEnded() {}
+    func prime(store: ConfigStore) {}
+    func unprimeIfIdle() {}
+
+    /// Called ~5×/sec. An opened card dims back to invisible after ~8 quiet
+    /// seconds; hovering it or a drag in flight resets the countdown.
     func tickIdle(dragActive: Bool) {
-        guard let panel, visible else {
+        reposition()
+        guard let panel, open else {
             idleTicks = 0
             return
         }
         let busy = dragActive
             || DropGlow.shared.targeted
-            || NSEvent.pressedMouseButtons != 0
             || panel.frame.insetBy(dx: -20, dy: -20).contains(NSEvent.mouseLocation)
         if busy {
             idleTicks = 0
@@ -95,52 +105,36 @@ final class ShelfWindow {
         idleTicks += 1
         if idleTicks >= 40 {
             idleTicks = 0
-            park()
+            goIdle()
         }
     }
 
-    /// A file drag just started somewhere on the Mac: pop the shelf up
-    /// so there's a big target to drop on (dropping on the menu bar icon
-    /// fights Mission Control's drag-to-top gesture).
-    func revealForFileDrag(store: ConfigStore) {
-        caughtDrop = false
-        guard !visible else { return }
-        autoShown = true
-        show(store: store)
-    }
-
-    /// The drop landed here — the idle countdown then tidies it away.
-    func noteDrop() {
-        caughtDrop = true
-        autoShown = false
-        idleTicks = 0
-    }
-
-    /// The drag ended. If we auto-appeared and caught nothing, slip away.
-    /// (Small delay: the drop callback can land a beat after mouse-up.)
-    func fileDragEnded() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            guard let self, self.autoShown, !self.caughtDrop else { return }
-            self.autoShown = false
-            self.park()
-        }
-    }
-
-    /// Move the card far off-screen but keep it ordered-in (a live drop
-    /// target). Cheaper and — crucially — different from orderOut, which
-    /// would drop it from the window server's drag-destination list.
-    private func park() {
+    /// Invisible, click-through, still catching drags — the resting state.
+    private func goIdle() {
         guard let panel else { return }
-        onScreen = false
-        visible = false
-        panel.alphaValue = 0
-        panel.setFrameOrigin(Self.parkedOrigin)
+        open = false
+        dropView?.passesClicksThrough = true
+        position(panel)
+        panel.alphaValue = Self.idleAlpha
+        panel.orderFrontRegardless()
+    }
+
+    /// Opaque and interactive.
+    private func showOpen(store: ConfigStore) {
+        ensurePanel(store: store)
+        guard let panel else { return }
+        open = true
+        idleTicks = 0
+        dropView?.passesClicksThrough = false
+        position(panel)
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
     }
 
     private func ensurePanel(store: ConfigStore) {
         guard panel == nil else { return }
         let panel = NSPanel(
-            contentRect: NSRect(origin: Self.parkedOrigin, size: NSSize(width: 264, height: 236)),
+            contentRect: NSRect(x: 0, y: 0, width: 264, height: 236),
             styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .utilityWindow],
             backing: .buffered, defer: false
         )
@@ -162,28 +156,15 @@ final class ShelfWindow {
         let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 236))
         drop.name = "shelf"
         drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
-        drop.onTargeted = { DropGlow.shared.targeted = $0 }
+        drop.onTargeted = { ShelfWindow.shared.dragHover($0) }
         drop.onAnyDrop = { ShelfWindow.shared.noteDrop() }
         let hosting = NSHostingView(rootView: ShelfView().environmentObject(store))
         hosting.frame = drop.bounds
         hosting.autoresizingMask = [.width, .height]
         drop.addSubview(hosting)
         panel.contentView = drop
-        // Order it in once, off-screen. It stays ordered-in for the app's
-        // whole life so drags always see it as a possible drop target.
-        panel.orderFrontRegardless()
+        self.dropView = drop
         self.panel = panel
-    }
-
-    private func show(store: ConfigStore) {
-        ensurePanel(store: store)
-        guard let panel else { return }
-        onScreen = true
-        visible = true
-        idleTicks = 0
-        position(panel)
-        panel.alphaValue = 1
-        panel.orderFrontRegardless()
     }
 
     /// Sits right under the Tempo menu bar icon. If the menu bar panel is
@@ -263,9 +244,9 @@ struct ShelfView: View {
                         }
                     }
                 }
-                Text(glow.dragInFlight ? "Drop it on this card." : "Drag items out anywhere.")
+                Text(glow.targeted ? "Drop it on this card." : "Drag items out anywhere.")
                     .font(.caption2)
-                    .foregroundStyle(glow.dragInFlight ? .secondary : .tertiary)
+                    .foregroundStyle(glow.targeted ? .secondary : .tertiary)
             }
         }
         .padding(14)
@@ -278,10 +259,10 @@ struct ShelfView: View {
             // top-of-screen drags for Mission Control, we can't stop it).
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
-                    glow.targeted || glow.dragInFlight
+                    glow.targeted
                         ? AnyShapeStyle(store.config.theme.gradient)
                         : AnyShapeStyle(Color.primary.opacity(0.1)),
-                    lineWidth: glow.targeted ? 2.5 : (glow.dragInFlight ? 2 : 1)
+                    lineWidth: glow.targeted ? 2.5 : 1
                 )
                 .padding(0.5)
         )
@@ -292,15 +273,15 @@ struct ShelfView: View {
     private var emptyState: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-            .foregroundStyle(glow.dragInFlight ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(.quaternary))
+            .foregroundStyle(glow.targeted ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(.quaternary))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(
                 VStack(spacing: 6) {
-                    Image(systemName: glow.dragInFlight ? "arrow.down.circle.fill" : "tray.and.arrow.down")
-                        .font(.system(size: glow.dragInFlight ? 26 : 20))
-                    Text(glow.dragInFlight ? "Drop it here!" : "Drop files or links here")
-                        .font(.system(.caption, design: .rounded).weight(glow.dragInFlight ? .semibold : .regular))
-                    Text(glow.dragInFlight ? "(the menu bar can't take drops)" : "then drag them out anywhere")
+                    Image(systemName: glow.targeted ? "arrow.down.circle.fill" : "tray.and.arrow.down")
+                        .font(.system(size: glow.targeted ? 26 : 20))
+                    Text(glow.targeted ? "Drop it here!" : "Drop files or links here")
+                        .font(.system(.caption, design: .rounded).weight(glow.targeted ? .semibold : .regular))
+                    Text(glow.targeted ? "(the menu bar can't take drops)" : "then drag them out anywhere")
                         .font(.system(size: 10, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }
