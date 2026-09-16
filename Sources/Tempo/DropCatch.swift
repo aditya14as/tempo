@@ -47,6 +47,8 @@ final class FileDropView: NSView {
     weak var forwardClicksTo: NSStatusBarButton?
 
     private static let legacyPaths = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+    /// Chromium/Electron apps put their drag payload under this type.
+    static let chromiumData = NSPasteboard.PasteboardType("org.chromium.web-custom-data")
     private static let promiseQueue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
@@ -63,7 +65,7 @@ final class FileDropView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL, Self.legacyPaths, .string]
+        var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL, Self.legacyPaths, .string, Self.chromiumData]
         types += NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
         registerForDraggedTypes(types)
     }
@@ -93,10 +95,28 @@ final class FileDropView: NSView {
         onTargeted?(false)
     }
 
+    /// Every drop attempt gets one line in /tmp/tempo-drop.log — reading it
+    /// shows exactly which pasteboard types an app hands us (debug aid).
+    private func logDrop(_ pb: NSPasteboard, note: String) {
+        let types = (pb.types ?? []).map(\.rawValue).joined(separator: ", ")
+        let text = (pb.string(forType: .string) ?? "").prefix(300)
+        let line = "\(Date()) [\(note)] types=[\(types)] text=\(text)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        let path = "/tmp/tempo-drop.log"
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: data)
+        }
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         onTargeted?(false)
         onAnyDrop?()
         let pb = sender.draggingPasteboard
+        logDrop(pb, note: "drop")
 
         // 1. Real URLs (Finder, Zed, modern apps).
         if let objects = pb.readObjects(forClasses: [NSURL.self]) as? [URL] {
@@ -136,6 +156,7 @@ final class FileDropView: NSView {
                 return true
             }
         }
+        logDrop(pb, note: "unparsed")
         return false
     }
 }
@@ -154,7 +175,7 @@ final class DragWatcher {
     private var dragActive = false
 
     private static let fileTypes: Set<NSPasteboard.PasteboardType> =
-        Set([.fileURL, NSPasteboard.PasteboardType("NSFilenamesPboardType")]
+        Set([.fileURL, .URL, NSPasteboard.PasteboardType("NSFilenamesPboardType"), FileDropView.chromiumData]
             + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
     func start() {
@@ -225,6 +246,11 @@ enum StatusItemDropper {
         }
         button.addSubview(drop)
         return true
+    }
+
+    /// Where the Tempo icon sits on screen — lets the Shelf open right there.
+    static func iconScreenFrame() -> NSRect? {
+        statusButton()?.window?.frame
     }
 
     private static func statusButton() -> NSStatusBarButton? {

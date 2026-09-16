@@ -82,14 +82,42 @@ final class ShelfWindow {
             hosting.autoresizingMask = [.width, .height]
             drop.addSubview(hosting)
             panel.contentView = drop
-            // Park it top-center, notch style — away from the menu bar panel.
-            if let screen = NSScreen.main {
-                let f = screen.visibleFrame
-                panel.setFrameTopLeftPoint(NSPoint(x: f.midX - 132, y: f.maxY - 6))
-            }
             self.panel = panel
         }
-        panel?.orderFrontRegardless()
+        if let panel {
+            position(panel)
+            panel.orderFrontRegardless()
+        }
+    }
+
+    /// Sits right under the Tempo menu bar icon. If the menu bar panel is
+    /// open there too, slides left of it so the two never overlap.
+    private func position(_ panel: NSPanel) {
+        let width = panel.frame.width
+        let icon = StatusItemDropper.iconScreenFrame()
+        let screen = NSScreen.screens.first { $0.frame.intersects(icon ?? .zero) } ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+
+        var x = (icon?.midX ?? visible.midX) - width / 2
+        let top = min((icon?.minY ?? visible.maxY) - 4, visible.maxY - 2)
+        if let open = menuBarPanelWindow() {
+            x = min(x, open.frame.minX - width - 10)
+        }
+        x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
+        panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
+    }
+
+    /// The MenuBarExtra popover, if it's currently on screen: a visible app
+    /// window hugging the menu bar that isn't the shelf or the status item.
+    private func menuBarPanelWindow() -> NSWindow? {
+        guard let top = NSScreen.main?.visibleFrame.maxY else { return nil }
+        return NSApp.windows.first { window in
+            window !== panel
+                && window.isVisible
+                && !window.className.contains("StatusBarWindow")
+                && window.frame.height > 100
+                && window.frame.maxY > top - 40
+        }
     }
 }
 
