@@ -47,8 +47,15 @@ final class FileDropView: NSView {
     weak var forwardClicksTo: NSStatusBarButton?
 
     private static let legacyPaths = NSPasteboard.PasteboardType("NSFilenamesPboardType")
-    /// Chromium/Electron apps put their drag payload under this type.
-    static let chromiumData = NSPasteboard.PasteboardType("org.chromium.web-custom-data")
+    /// Chromium/Electron drags (Conductor, VS Code, browsers) tag themselves
+    /// with these — registering them lets those drags in even when no plain
+    /// file type is present; the payload then usually sits in plain text.
+    static let chromiumTypes: [NSPasteboard.PasteboardType] = [
+        NSPasteboard.PasteboardType("org.chromium.web-custom-data"),
+        NSPasteboard.PasteboardType("org.chromium.chromium-initiated-drag"),
+        NSPasteboard.PasteboardType("org.chromium.chromium-renderer-initiated-drag"),
+        NSPasteboard.PasteboardType("org.chromium.drag-dummy-type"),
+    ]
     private static let promiseQueue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
@@ -65,7 +72,8 @@ final class FileDropView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL, Self.legacyPaths, .string, Self.chromiumData]
+        var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL, Self.legacyPaths, .string]
+        types += Self.chromiumTypes
         types += NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
         registerForDraggedTypes(types)
     }
@@ -175,7 +183,8 @@ final class DragWatcher {
     private var dragActive = false
 
     private static let fileTypes: Set<NSPasteboard.PasteboardType> =
-        Set([.fileURL, .URL, NSPasteboard.PasteboardType("NSFilenamesPboardType"), FileDropView.chromiumData]
+        Set([.fileURL, .URL, NSPasteboard.PasteboardType("NSFilenamesPboardType")]
+            + FileDropView.chromiumTypes
             + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
     func start() {

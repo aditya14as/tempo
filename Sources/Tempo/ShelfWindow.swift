@@ -12,6 +12,7 @@ final class ShelfWindow {
     /// True while the shelf is only up because a file drag brought it up.
     private var autoShown = false
     private var caughtDrop = false
+    private var hideTimer: Timer?
 
     func toggle(store: ConfigStore) {
         if let panel, panel.isVisible {
@@ -19,6 +20,7 @@ final class ShelfWindow {
             return
         }
         autoShown = false
+        hideTimer?.invalidate()
         show(store: store)
     }
 
@@ -27,6 +29,7 @@ final class ShelfWindow {
     func reveal(store: ConfigStore) {
         autoShown = false
         show(store: store)
+        scheduleAutoHide()
     }
 
     /// A file drag just started somewhere on the Mac: pop the shelf up
@@ -39,10 +42,35 @@ final class ShelfWindow {
         show(store: store)
     }
 
-    /// The drop landed here — an auto-shown shelf then stays open.
+    /// The drop landed here — stay up a few seconds so you see it stuck,
+    /// then tidy away on a timer (hovering keeps it open).
     func noteDrop() {
         caughtDrop = true
         autoShown = false
+        scheduleAutoHide()
+    }
+
+    /// Slips away after a few quiet seconds; hovering, a drag in flight,
+    /// or a held mouse button (dragging something out) buys more time.
+    private func scheduleAutoHide(after seconds: TimeInterval = 8) {
+        hideTimer?.invalidate()
+        hideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { ShelfWindow.shared.autoHideFired() }
+            }
+        }
+    }
+
+    private func autoHideFired() {
+        guard let panel, panel.isVisible else { return }
+        let busy = panel.frame.contains(NSEvent.mouseLocation)
+            || DropGlow.shared.targeted
+            || NSEvent.pressedMouseButtons != 0
+        if busy {
+            scheduleAutoHide(after: 3)
+        } else {
+            panel.orderOut(nil)
+        }
     }
 
     /// The drag ended. If we auto-appeared and caught nothing, slip away.
@@ -58,12 +86,16 @@ final class ShelfWindow {
     private func show(store: ConfigStore) {
         if panel == nil {
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 264, height: 320),
+                contentRect: NSRect(x: 0, y: 0, width: 264, height: 236),
                 styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .utilityWindow],
                 backing: .buffered, defer: false
             )
             panel.titleVisibility = .hidden
             panel.titlebarAppearsTransparent = true
+            // No traffic-light dots — it's a floating card, not a document.
+            for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+                panel.standardWindowButton(kind)?.isHidden = true
+            }
             panel.isMovableByWindowBackground = true
             // Above the menu bar popover, so it never hides behind the panel.
             panel.level = .statusBar
@@ -73,7 +105,7 @@ final class ShelfWindow {
             panel.backgroundColor = .clear
             // AppKit-level drop container: catches drags from VS Code,
             // Conductor, Zed, browsers — types SwiftUI's drop can't read.
-            let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 320))
+            let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 236))
             drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
             drop.onTargeted = { DropGlow.shared.targeted = $0 }
             drop.onAnyDrop = { ShelfWindow.shared.noteDrop() }
@@ -129,9 +161,17 @@ struct ShelfView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Shelf")
                     .font(.system(.headline, design: .rounded))
+                if !store.config.shelf.isEmpty {
+                    Text("\(store.config.shelf.count)")
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
                 Spacer()
                 if !store.config.shelf.isEmpty {
                     Button("Clear") { store.config.shelf.removeAll() }
@@ -150,37 +190,40 @@ struct ShelfView: View {
                         }
                     }
                 }
+                Text("Drag items out anywhere.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-            Text("Drop files or links here, then drag them anywhere.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
         .padding(14)
-        .frame(width: 264, height: 320, alignment: .top)
-        .background(.ultraThinMaterial)
+        .frame(width: 264, height: 236, alignment: .top)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
                     glow.targeted ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.primary.opacity(0.1)),
                     lineWidth: glow.targeted ? 2 : 1
                 )
-                .padding(1)
+                .padding(0.5)
         )
         // Drops are handled by the FileDropView underneath this view —
         // it understands VS Code/Electron/browser drags SwiftUI can't.
     }
 
     private var emptyState: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
             .foregroundStyle(.quaternary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(
                 VStack(spacing: 6) {
                     Image(systemName: "tray.and.arrow.down")
-                        .font(.system(size: 22))
-                    Text("Drop anything here")
+                        .font(.system(size: 20))
+                    Text("Drop files or links here")
                         .font(.system(.caption, design: .rounded))
+                    Text("then drag them out anywhere")
+                        .font(.system(size: 10, design: .rounded))
+                        .foregroundStyle(.tertiary)
                 }
                 .foregroundStyle(.secondary)
             )
