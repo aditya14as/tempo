@@ -18,6 +18,12 @@ final class ShelfWindow {
         show(store: store)
     }
 
+    /// Brings the shelf up (or keeps it up) — used when a file lands on
+    /// the menu bar icon so you can see where it went.
+    func reveal(store: ConfigStore) {
+        show(store: store)
+    }
+
     private func show(store: ConfigStore) {
         if panel == nil {
             let panel = NSPanel(
@@ -34,7 +40,16 @@ final class ShelfWindow {
             panel.hidesOnDeactivate = false
             panel.isReleasedWhenClosed = false
             panel.backgroundColor = .clear
-            panel.contentView = NSHostingView(rootView: ShelfView().environmentObject(store))
+            // AppKit-level drop container: catches drags from VS Code,
+            // Conductor, Zed, browsers — types SwiftUI's drop can't read.
+            let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 320))
+            drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
+            drop.onTargeted = { DropGlow.shared.targeted = $0 }
+            let hosting = NSHostingView(rootView: ShelfView().environmentObject(store))
+            hosting.frame = drop.bounds
+            hosting.autoresizingMask = [.width, .height]
+            drop.addSubview(hosting)
+            panel.contentView = drop
             // Park it top-center, notch style — away from the menu bar panel.
             if let screen = NSScreen.main {
                 let f = screen.visibleFrame
@@ -48,7 +63,7 @@ final class ShelfWindow {
 
 struct ShelfView: View {
     @EnvironmentObject var store: ConfigStore
-    @State private var dropTargeted = false
+    @ObservedObject private var glow = DropGlow.shared
 
     private let columns = [GridItem(.adaptive(minimum: 68), spacing: 8)]
 
@@ -86,16 +101,13 @@ struct ShelfView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(
-                    dropTargeted ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.primary.opacity(0.1)),
-                    lineWidth: dropTargeted ? 2 : 1
+                    glow.targeted ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.primary.opacity(0.1)),
+                    lineWidth: glow.targeted ? 2 : 1
                 )
                 .padding(1)
         )
-        .dropDestination(for: URL.self) { urls, _ in
-            addDropped(urls)
-        } isTargeted: { targeted in
-            dropTargeted = targeted
-        }
+        // Drops are handled by the FileDropView underneath this view —
+        // it understands VS Code/Electron/browser drags SwiftUI can't.
     }
 
     private var emptyState: some View {
@@ -169,13 +181,5 @@ struct ShelfView: View {
             return NSItemProvider(object: url as NSURL)
         }
         return NSItemProvider(object: item.link as NSString)
-    }
-
-    @discardableResult
-    private func addDropped(_ urls: [URL]) -> Bool {
-        let free = AppConfig.maxShelf - store.config.shelf.count
-        guard free > 0, !urls.isEmpty else { return false }
-        store.config.shelf.append(contentsOf: urls.prefix(free).map(ShelfItem.fromDroppedURL))
-        return true
     }
 }

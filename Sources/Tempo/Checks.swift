@@ -337,6 +337,35 @@ enum Checks {
         expect(decodedOld?.text == "old" && decodedOld?.dueDate == nil && decodedOld?.link == nil,
                "todos saved before this feature still load")
 
+        // Drops from editors arrive as plain text — paths and links must parse.
+        expect(
+            DroppedURLs.url(fromString: "/Users/x/report.pdf")?.path == "/Users/x/report.pdf",
+            "an absolute path drop becomes a file URL"
+        )
+        expect(
+            DroppedURLs.url(fromString: "file:///tmp/a%20b.txt")?.path == "/tmp/a b.txt",
+            "a file:// drop decodes its escapes"
+        )
+        expect(
+            DroppedURLs.url(fromString: "https://apple.com")?.scheme == "https",
+            "a web link drop stays a web link"
+        )
+        expect(
+            DroppedURLs.url(fromString: "~/notes.txt")?.path.hasSuffix("/notes.txt") == true
+                && DroppedURLs.url(fromString: "~/notes.txt")?.path.hasPrefix("/") == true,
+            "a ~ path expands to the home folder"
+        )
+        expect(DroppedURLs.url(fromString: "   ") == nil, "blank text is not a drop")
+        expect(DroppedURLs.url(fromString: "hello world") == nil, "plain words are not a drop")
+        expect(
+            DroppedURLs.urls(fromText: "file:///tmp/a.txt\nfile:///tmp/b.txt").count == 2,
+            "a two-line uri list yields two files"
+        )
+        expect(
+            DroppedURLs.urls(fromText: "junk\n/tmp/real.txt").map(\.path) == ["/tmp/real.txt"],
+            "junk lines are skipped, real paths kept"
+        )
+
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1
     }

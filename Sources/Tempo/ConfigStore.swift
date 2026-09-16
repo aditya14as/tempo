@@ -38,6 +38,18 @@ final class ConfigStore: ObservableObject {
         }
     }
 
+    /// Files/links landing on the Shelf (from the shelf window or the
+    /// menu bar icon). Skips duplicates, respects the shelf cap.
+    @discardableResult
+    func addToShelf(_ urls: [URL]) -> Bool {
+        let existing = Set(config.shelf.map(\.link))
+        let fresh = urls.map(ShelfItem.fromDroppedURL).filter { !existing.contains($0.link) }
+        let free = AppConfig.maxShelf - config.shelf.count
+        guard free > 0, !fresh.isEmpty else { return false }
+        config.shelf.append(contentsOf: fresh.prefix(free))
+        return true
+    }
+
     /// Drops "+" rows that were never filled in.
     func pruneBlankTodos() {
         if config.todos.contains(where: \.isBlank) {

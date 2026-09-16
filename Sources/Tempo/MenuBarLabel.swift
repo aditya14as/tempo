@@ -6,6 +6,14 @@ struct MenuBarLabel: View {
     @ObservedObject var ticker: Ticker
 
     var body: some View {
+        content
+            // Lets you drop files straight onto the menu bar icon —
+            // they land on the Shelf without opening anything first.
+            .background(StatusItemDropInstaller(store: store))
+    }
+
+    @ViewBuilder
+    private var content: some View {
         let config = store.config
         if config.menuBarShows == .todayWeek {
             // Today + week side by side: letter badge + percent + mini progress bar.
