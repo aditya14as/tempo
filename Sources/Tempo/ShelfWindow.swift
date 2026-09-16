@@ -108,6 +108,7 @@ final class ShelfWindow {
             // AppKit-level drop container: catches drags from VS Code,
             // Conductor, Zed, browsers — types SwiftUI's drop can't read.
             let drop = FileDropView(frame: NSRect(x: 0, y: 0, width: 264, height: 236))
+            drop.name = "shelf"
             drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
             drop.onTargeted = { DropGlow.shared.targeted = $0 }
             drop.onAnyDrop = { ShelfWindow.shared.noteDrop() }

@@ -127,6 +127,8 @@ final class DropGlow: ObservableObject {
 /// VS Code, Conductor, Zed and browsers use older pasteboard types (path
 /// lists, plain text, file promises) — this view reads them all.
 final class FileDropView: NSView {
+    /// Which drop zone this is, for the log ("shelf", "icon", "catcher").
+    var name = "view"
     var onDrop: (([URL]) -> Void)?
     var onTargeted: ((Bool) -> Void)?
     /// Fires the instant anything is dropped, before parsing — lets the
@@ -195,7 +197,7 @@ final class FileDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        Self.log("enter", pasteboard: sender.draggingPasteboard)
+        Self.log("enter@\(name)", pasteboard: sender.draggingPasteboard)
         onTargeted?(true)
         return .copy
     }
@@ -236,7 +238,7 @@ final class FileDropView: NSView {
         // while the real path sits right there in the plain text.
         let urls = DropPayload.urls(from: pb)
         if !urls.isEmpty {
-            Self.log("drop ok \(urls.count)", pasteboard: pb)
+            Self.log("drop@\(name) ok \(urls.count)", pasteboard: pb)
             onDrop?(urls)
             NSSound(named: "Pop")?.play()  // audible "got it!"
             return true
@@ -264,6 +266,70 @@ final class FileDropView: NSView {
     }
 }
 
+// MARK: - Invisible catcher over the icon while the mouse is dragging
+
+/// Some apps (Chromium/Electron: Conductor, VS Code…) start drags with lazy
+/// pasteboard writers — nothing appears on the drag pasteboard until a
+/// drop target asks, so polling it sees nothing. And the status item's own
+/// window doesn't reliably hand drags to views inside it. This sidesteps
+/// both: while the mouse button is held and moving, a transparent panel
+/// sits exactly over the Tempo icon plus a strip just under it. Any drag
+/// that enters pops the shelf; a drop right there lands on the shelf too.
+/// It only exists mid-drag, so it can never steal a click.
+@MainActor
+final class DragCatcher {
+    static let shared = DragCatcher()
+    private var panel: NSPanel?
+
+    /// How far below the menu bar the catch strip reaches.
+    private let stripHeight: CGFloat = 36
+    private let sideMargin: CGFloat = 48
+
+    func show() {
+        guard let icon = StatusItemDropper.iconScreenFrame(), icon.height > 0 else { return }
+        let frame = NSRect(
+            x: icon.minX - sideMargin, y: icon.minY - stripHeight,
+            width: icon.width + sideMargin * 2, height: icon.height + stripHeight
+        )
+        if panel == nil {
+            let panel = NSPanel(
+                contentRect: frame,
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered, defer: false
+            )
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = false
+            // One notch above the status bar, so it wins hit-testing there.
+            panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+            panel.hidesOnDeactivate = false
+            panel.isReleasedWhenClosed = false
+            let drop = FileDropView(frame: NSRect(origin: .zero, size: frame.size))
+            drop.name = "catcher"
+            drop.autoresizingMask = [.width, .height]
+            drop.onTargeted = { entered in
+                guard entered, let store = ConfigStore.shared else { return }
+                DropGlow.shared.dragInFlight = true
+                ShelfWindow.shared.revealForFileDrag(store: store)
+            }
+            drop.onDrop = { urls in
+                guard let store = ConfigStore.shared else { return }
+                store.addToShelf(urls)
+                ShelfWindow.shared.reveal(store: store)
+            }
+            panel.contentView = drop
+            self.panel = panel
+        }
+        panel?.setFrame(frame, display: false)
+        panel?.orderFrontRegardless()
+    }
+
+    func hide() {
+        panel?.orderOut(nil)
+    }
+}
+
 // MARK: - Auto-show the Shelf when a file drag starts anywhere
 
 /// Watches the system drag pasteboard (cheap poll, ~5×/sec). When you start
@@ -276,6 +342,11 @@ final class DragWatcher {
     private var timer: Timer?
     private var lastChange = NSPasteboard(name: .drag).changeCount
     private var dragActive = false
+    /// Where the button went down; a move past `dragSlop` from here means
+    /// the mouse is dragging *something* — time to arm the catcher.
+    private var pressOrigin: NSPoint?
+    private var mouseDragging = false
+    private let dragSlop: CGFloat = 8
 
     private static let fileTypes: Set<NSPasteboard.PasteboardType> =
         Set([.fileURL, .URL, DropPayload.legacyPaths,
@@ -296,7 +367,8 @@ final class DragWatcher {
     private func tick() {
         let pb = NSPasteboard(name: .drag)
         let mouseIsDown = NSEvent.pressedMouseButtons & 1 == 1
-        ShelfWindow.shared.tickIdle(dragActive: dragActive && mouseIsDown)
+        ShelfWindow.shared.tickIdle(dragActive: (dragActive || mouseDragging) && mouseIsDown)
+        trackMouseDrag(mouseIsDown: mouseIsDown)
         if dragActive {
             if !mouseIsDown {
                 dragActive = false
@@ -318,6 +390,33 @@ final class DragWatcher {
         ShelfWindow.shared.revealForFileDrag(store: store)
     }
 
+    /// Pasteboard-free drag detection: button held + moved = dragging.
+    /// Arms the catcher over the icon; disarms shortly after release
+    /// (shortly, so a drop landing on it still gets delivered).
+    private func trackMouseDrag(mouseIsDown: Bool) {
+        if mouseIsDown {
+            let here = NSEvent.mouseLocation
+            guard let origin = pressOrigin else {
+                pressOrigin = here
+                return
+            }
+            if !mouseDragging, hypot(here.x - origin.x, here.y - origin.y) > dragSlop {
+                mouseDragging = true
+                DragCatcher.shared.show()
+            }
+        } else if pressOrigin != nil {
+            pressOrigin = nil
+            if mouseDragging {
+                mouseDragging = false
+                DropGlow.shared.dragInFlight = false
+                ShelfWindow.shared.fileDragEnded()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    DragCatcher.shared.hide()
+                }
+            }
+        }
+    }
+
     private func hasFiles(_ pb: NSPasteboard) -> Bool {
         guard let types = pb.types else { return false }
         return types.contains { Self.fileTypes.contains($0) }
@@ -335,7 +434,12 @@ enum StatusItemDropper {
     /// The status item can appear a beat after launch; retry until found.
     static func installWhenReady(attempts: Int = 40) {
         guard attempts > 0 else { return }
-        if install() { return }
+        if install() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                if let button = statusButton() { diagnose(button, note: "icon overlay 6s later") }
+            }
+            return
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             installWhenReady(attempts: attempts - 1)
         }
@@ -347,9 +451,11 @@ enum StatusItemDropper {
         guard let button = statusButton() else { return false }
         if let existing = button.subviews.compactMap({ $0 as? FileDropView }).first {
             existing.frame = button.bounds
+            diagnose(button, note: "icon overlay present")
             return true
         }
         let drop = FileDropView(frame: button.bounds)
+        drop.name = "icon"
         drop.autoresizingMask = [.width, .height]
         drop.forwardClicksTo = button
         drop.onDrop = { urls in
@@ -358,7 +464,29 @@ enum StatusItemDropper {
             ShelfWindow.shared.reveal(store: store)
         }
         button.addSubview(drop)
+        diagnose(button, note: "icon overlay installed")
         return true
+    }
+
+    /// Debug aid: what the status item window looks like around our overlay.
+    private static func diagnose(_ button: NSStatusBarButton, note: String) {
+        guard let window = button.window else { return }
+        func tree(_ view: NSView, depth: Int) -> String {
+            let pad = String(repeating: "  ", count: depth)
+            let types = view.registeredDraggedTypes.count
+            var line = "\(pad)\(view.className) frame=\(view.frame) types=\(types)\n"
+            for sub in view.subviews { line += tree(sub, depth: depth + 1) }
+            return line
+        }
+        let delegate = window.delegate.map { String(describing: type(of: $0)) } ?? "nil"
+        let line = "\(Date()) [\(note)] window=\(window.className) level=\(window.level.rawValue)"
+            + " delegate=\(delegate) frame=\(window.frame)\n"
+            + tree(window.contentView!, depth: 1)
+        if let data = line.data(using: .utf8), let handle = FileHandle(forWritingAtPath: "/tmp/tempo-drop.log") {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        }
     }
 
     /// Where the Tempo icon sits on screen — lets the Shelf open right there.
