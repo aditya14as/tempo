@@ -209,10 +209,15 @@ struct ShelfView: View {
         .frame(width: 264, height: 236, alignment: .top)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
+            // Colored border while any file drag is in flight — the card,
+            // not the menu bar icon, is where drops land (macOS grabs
+            // top-of-screen drags for Mission Control, we can't stop it).
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
-                    glow.targeted ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.primary.opacity(0.1)),
-                    lineWidth: glow.targeted ? 2 : 1
+                    glow.targeted || glow.dragInFlight
+                        ? AnyShapeStyle(store.config.theme.gradient)
+                        : AnyShapeStyle(Color.primary.opacity(0.1)),
+                    lineWidth: glow.targeted ? 2.5 : (glow.dragInFlight ? 2 : 1)
                 )
                 .padding(0.5)
         )

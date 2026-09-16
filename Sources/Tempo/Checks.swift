@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Self-checks for the progress math, run with `Tempo --check`.
@@ -365,6 +366,64 @@ enum Checks {
             DroppedURLs.urls(fromText: "junk\n/tmp/real.txt").map(\.path) == ["/tmp/real.txt"],
             "junk lines are skipped, real paths kept"
         )
+
+        // Builds the little-endian blob Chromium uses for drag data:
+        // payload size, entry count, then UTF-16 key/value pairs padded
+        // to 4-byte boundaries. Mirrors Chromium's Pickle writer.
+        func pickle(_ entries: [(String, String)]) -> Data {
+            var payload = Data()
+            func put(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { payload.append(contentsOf: $0) } }
+            func put(_ s: String) {
+                let units = Array(s.utf16)
+                put(UInt32(units.count))
+                units.withUnsafeBytes { payload.append(contentsOf: $0) }
+                while payload.count % 4 != 0 { payload.append(0) }
+            }
+            put(UInt32(entries.count))
+            for (key, value) in entries {
+                put(key)
+                put(value)
+            }
+            var out = Data()
+            withUnsafeBytes(of: UInt32(payload.count).littleEndian) { out.append(contentsOf: $0) }
+            out.append(payload)
+            return out
+        }
+
+        expect(
+            ChromiumWebCustomData.urls(fromPickle: pickle([("text/plain", "/tmp/pickle.txt")]))
+                .map(\.path) == ["/tmp/pickle.txt"],
+            "a chromium pickle with a path yields that file"
+        )
+        expect(
+            ChromiumWebCustomData.urls(fromPickle: pickle([
+                ("x-conductor/thing", "whatever"),
+                ("text/uri-list", "file:///tmp/from%20list.txt"),
+            ])).map(\.path) == ["/tmp/from list.txt"],
+            "a chromium pickle prefers its uri list"
+        )
+        expect(
+            ChromiumWebCustomData.urls(fromPickle: Data([9, 9, 9])).isEmpty,
+            "a garbage pickle yields nothing"
+        )
+
+        // A Conductor-style drop: promise types present but a real path in
+        // the plain text. The text must win — promises are a dead end there.
+        let fake = NSPasteboard(name: NSPasteboard.Name("tempo-check-\(UUID().uuidString)"))
+        fake.declareTypes(
+            [
+                NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
+                NSPasteboard.PasteboardType("Apple files promise pasteboard type"),
+                DropPayload.webCustomData,
+                .string,
+            ], owner: nil
+        )
+        fake.setString("/tmp/conductor-style.py", forType: .string)
+        expect(
+            DropPayload.urls(from: fake).map(\.path) == ["/tmp/conductor-style.py"],
+            "a promise-plus-text drop takes the text path"
+        )
+        fake.releaseGlobally()
 
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1

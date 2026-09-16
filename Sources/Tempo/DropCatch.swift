@@ -25,11 +25,100 @@ enum DroppedURLs {
     }
 }
 
-/// Lights up the shelf border while a drag hovers over it.
+/// Chromium (Electron apps: Conductor, VS Code, browsers) bundles a web
+/// page's custom drag data into one blob called a "Pickle". Layout, all
+/// little-endian: uint32 payload size, uint32 entry count, then per entry
+/// a key and a value — each a uint32 character count plus UTF-16 text,
+/// padded so the next read starts on a 4-byte boundary.
+enum ChromiumWebCustomData {
+    static func entries(fromPickle data: Data) -> [String: String] {
+        // Payload starts after the 4-byte size header; tolerate its absence.
+        parse(data, from: 4) ?? parse(data, from: 0) ?? [:]
+    }
+
+    /// Pull anything path- or link-shaped out of the blob.
+    static func urls(fromPickle data: Data) -> [URL] {
+        let map = entries(fromPickle: data)
+        for key in ["text/uri-list", "text/plain"] {
+            if let value = map[key] {
+                let urls = DroppedURLs.urls(fromText: value)
+                if !urls.isEmpty { return urls }
+            }
+        }
+        // Unknown keys? Any value that parses as paths/links still counts.
+        return map.values.flatMap { DroppedURLs.urls(fromText: $0) }
+    }
+
+    private static func parse(_ raw: Data, from start: Int) -> [String: String]? {
+        let data = Data(raw)  // rebase indices at 0
+        var offset = start
+        func readUInt32() -> UInt32? {
+            guard offset >= 0, offset + 4 <= data.count else { return nil }
+            var value: UInt32 = 0
+            _ = withUnsafeMutableBytes(of: &value) { data.copyBytes(to: $0, from: offset..<(offset + 4)) }
+            offset += 4
+            return UInt32(littleEndian: value)
+        }
+        func readString() -> String? {
+            guard let chars = readUInt32(), chars < 1_000_000 else { return nil }
+            let bytes = Int(chars) * 2
+            guard offset + bytes <= data.count else { return nil }
+            let slice = data.subdata(in: offset..<(offset + bytes))
+            offset += bytes
+            offset = (offset + 3) & ~3
+            return String(data: slice, encoding: .utf16LittleEndian)
+        }
+        guard let count = readUInt32(), count > 0, count < 1000 else { return nil }
+        var map: [String: String] = [:]
+        for _ in 0..<count {
+            guard let key = readString(), let value = readString() else { return nil }
+            map[key] = value
+        }
+        return map
+    }
+}
+
+/// Every way apps put dragged files on a pasteboard, tried most-reliable
+/// first. File promises are deliberately NOT here — they're async and some
+/// apps (Chromium) promise files they never deliver, so they only run as a
+/// last resort in FileDropView.
+enum DropPayload {
+    static let legacyPaths = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+    static let webCustomData = NSPasteboard.PasteboardType("org.chromium.web-custom-data")
+
+    static func urls(from pb: NSPasteboard) -> [URL] {
+        // 1. Real URLs (Finder, Zed, modern apps).
+        if let objects = pb.readObjects(forClasses: [NSURL.self]) as? [URL] {
+            let urls = objects.filter {
+                $0.isFileURL || $0.scheme == "http" || $0.scheme == "https"
+            }
+            if !urls.isEmpty { return urls }
+        }
+        // 2. Legacy path lists (older Electron file-tree drags).
+        if let paths = pb.propertyList(forType: legacyPaths) as? [String], !paths.isEmpty {
+            return paths.map { URL(fileURLWithPath: $0) }
+        }
+        // 3. Plain text that looks like a path or link (VS Code, Conductor).
+        if let text = pb.string(forType: .string) {
+            let urls = DroppedURLs.urls(fromText: text)
+            if !urls.isEmpty { return urls }
+        }
+        // 4. Chromium's bundled custom drag data.
+        if let blob = pb.data(forType: webCustomData) {
+            let urls = ChromiumWebCustomData.urls(fromPickle: blob)
+            if !urls.isEmpty { return urls }
+        }
+        return []
+    }
+}
+
+/// Lights up the shelf border while a drag hovers over it (`targeted`) or
+/// is in flight anywhere on screen (`dragInFlight`).
 @MainActor
 final class DropGlow: ObservableObject {
     static let shared = DropGlow()
     @Published var targeted = false
+    @Published var dragInFlight = false
 }
 
 // MARK: - An AppKit drop target that accepts far more than SwiftUI's does
@@ -46,16 +135,30 @@ final class FileDropView: NSView {
     /// When set, plain clicks fall through to the status bar button below.
     weak var forwardClicksTo: NSStatusBarButton?
 
-    private static let legacyPaths = NSPasteboard.PasteboardType("NSFilenamesPboardType")
     /// Chromium/Electron drags (Conductor, VS Code, browsers) tag themselves
     /// with these — registering them lets those drags in even when no plain
     /// file type is present; the payload then usually sits in plain text.
     static let chromiumTypes: [NSPasteboard.PasteboardType] = [
-        NSPasteboard.PasteboardType("org.chromium.web-custom-data"),
+        DropPayload.webCustomData,
         NSPasteboard.PasteboardType("org.chromium.chromium-initiated-drag"),
         NSPasteboard.PasteboardType("org.chromium.chromium-renderer-initiated-drag"),
         NSPasteboard.PasteboardType("org.chromium.drag-dummy-type"),
     ]
+
+    /// Every live drop view — so a drag with brand-new types (each editor
+    /// invents its own) can be registered everywhere the moment it starts.
+    private static let registry = NSHashTable<FileDropView>.weakObjects()
+
+    /// Called by DragWatcher when a drag begins: whatever types it carries,
+    /// make sure every drop view accepts them, or draggingEntered never fires.
+    static func acceptAlso(_ types: [NSPasteboard.PasteboardType]) {
+        for view in registry.allObjects {
+            let known = Set(view.registeredDraggedTypes)
+            let fresh = types.filter { !known.contains($0) }
+            guard !fresh.isEmpty else { continue }
+            view.registerForDraggedTypes(view.registeredDraggedTypes + fresh)
+        }
+    }
     private static let promiseQueue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
@@ -72,10 +175,11 @@ final class FileDropView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL, Self.legacyPaths, .string]
+        var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL, DropPayload.legacyPaths, .string]
         types += Self.chromiumTypes
         types += NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
         registerForDraggedTypes(types)
+        Self.registry.add(self)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -91,7 +195,7 @@ final class FileDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        logDrop(sender.draggingPasteboard, note: "enter")
+        Self.log("enter", pasteboard: sender.draggingPasteboard)
         onTargeted?(true)
         return .copy
     }
@@ -106,7 +210,7 @@ final class FileDropView: NSView {
 
     /// Every drop attempt gets one line in /tmp/tempo-drop.log — reading it
     /// shows exactly which pasteboard types an app hands us (debug aid).
-    private func logDrop(_ pb: NSPasteboard, note: String) {
+    static func log(_ note: String, pasteboard pb: NSPasteboard) {
         let types = (pb.types ?? []).map(\.rawValue).joined(separator: ", ")
         let text = (pb.string(forType: .string) ?? "").prefix(300)
         let line = "\(Date()) [\(note)] types=[\(types)] text=\(text)\n"
@@ -125,28 +229,23 @@ final class FileDropView: NSView {
         onTargeted?(false)
         onAnyDrop?()
         let pb = sender.draggingPasteboard
-        logDrop(pb, note: "drop")
 
-        // 1. Real URLs (Finder, Zed, modern apps).
-        if let objects = pb.readObjects(forClasses: [NSURL.self]) as? [URL] {
-            let urls = objects.filter {
-                $0.isFileURL || $0.scheme == "http" || $0.scheme == "https"
-            }
-            if !urls.isEmpty {
-                onDrop?(urls)
-                return true
-            }
-        }
-
-        // 2. Legacy path lists (Electron apps: VS Code, Conductor, …).
-        if let paths = pb.propertyList(forType: Self.legacyPaths) as? [String], !paths.isEmpty {
-            onDrop?(paths.map { URL(fileURLWithPath: $0) })
+        // Direct payloads first: URLs, path lists, plain text, Chromium
+        // blobs. Promises used to run before the text check — and swallowed
+        // Conductor's drops: Chromium promises a file it never delivers,
+        // while the real path sits right there in the plain text.
+        let urls = DropPayload.urls(from: pb)
+        if !urls.isEmpty {
+            Self.log("drop ok \(urls.count)", pasteboard: pb)
+            onDrop?(urls)
             return true
         }
 
-        // 3. File promises (browsers, Mail): the file gets copied in first.
+        // Last resort: file promises (browsers, Mail) — a copy is written
+        // into our Drops folder, then lands on the shelf.
         if let receivers = pb.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
             !receivers.isEmpty {
+            Self.log("drop promise", pasteboard: pb)
             let dir = Self.dropsDirectory
             for receiver in receivers {
                 receiver.receivePromisedFiles(atDestination: dir, options: [:], operationQueue: Self.promiseQueue) { url, error in
@@ -156,16 +255,7 @@ final class FileDropView: NSView {
             }
             return true
         }
-
-        // 4. Plain text that looks like a path or link.
-        if let text = pb.string(forType: .string) {
-            let urls = DroppedURLs.urls(fromText: text)
-            if !urls.isEmpty {
-                onDrop?(urls)
-                return true
-            }
-        }
-        logDrop(pb, note: "unparsed")
+        Self.log("drop unparsed", pasteboard: pb)
         return false
     }
 }
@@ -184,7 +274,9 @@ final class DragWatcher {
     private var dragActive = false
 
     private static let fileTypes: Set<NSPasteboard.PasteboardType> =
-        Set([.fileURL, .URL, NSPasteboard.PasteboardType("NSFilenamesPboardType")]
+        Set([.fileURL, .URL, DropPayload.legacyPaths,
+             NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
+             NSPasteboard.PasteboardType("Apple files promise pasteboard type")]
             + FileDropView.chromiumTypes
             + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
@@ -204,6 +296,7 @@ final class DragWatcher {
         if dragActive {
             if !mouseIsDown {
                 dragActive = false
+                DropGlow.shared.dragInFlight = false
                 ShelfWindow.shared.fileDragEnded()
             }
             return
@@ -211,8 +304,13 @@ final class DragWatcher {
         guard pb.changeCount != lastChange else { return }
         lastChange = pb.changeCount
         // A fresh drag pasteboard + button held = a drag is in flight.
-        guard mouseIsDown, hasFiles(pb), let store = ConfigStore.shared else { return }
+        guard mouseIsDown, let types = pb.types, !types.isEmpty else { return }
+        // Whatever this app calls its drag data, accept it from now on.
+        FileDropView.acceptAlso(types)
+        FileDropView.log("dragstart", pasteboard: pb)
+        guard hasFiles(pb), let store = ConfigStore.shared else { return }
         dragActive = true
+        DropGlow.shared.dragInFlight = true
         ShelfWindow.shared.revealForFileDrag(store: store)
     }
 
