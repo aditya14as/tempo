@@ -249,6 +249,11 @@ struct TodoItem: Codable, Equatable, Identifiable {
     /// Apple Reminders identifier once exported — lets done-state sync both ways.
     var reminderID: String? = nil
 
+    /// An abandoned "+" row: nothing typed, nothing attached, no due time.
+    var isBlank: Bool {
+        text.trimmingCharacters(in: .whitespaces).isEmpty && link == nil && dueDate == nil
+    }
+
     /// The attached file/URL as something openable, or nil.
     var linkURL: URL? {
         guard let link, !link.isEmpty else { return nil }

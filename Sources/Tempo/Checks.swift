@@ -324,6 +324,13 @@ enum Checks {
         let syncBack = syncData.flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
         expect(syncBack?.todos.first?.reminderID == "abc-123", "reminder link survives save and load")
 
+        // Abandoned "+" rows count as blank; anything meaningful does not.
+        expect(TodoItem(text: "").isBlank, "an untouched new row is blank")
+        expect(TodoItem(text: "   ").isBlank, "a spaces-only row is blank")
+        expect(!TodoItem(text: "real task").isBlank, "typed text keeps the row")
+        expect(!TodoItem(text: "", dueDate: futureDue).isBlank, "a set due time keeps the row")
+        expect(!TodoItem(text: "", link: "/tmp/a.pdf").isBlank, "an attachment keeps the row")
+
         // Yesterday's saved todos (no due/link fields) still decode.
         let oldTodo = #"{"id":"6F1C1C1E-2A2B-4C4D-8E8F-101112131415","text":"old","done":false}"#.data(using: .utf8)!
         let decodedOld = try? JSONDecoder().decode(TodoItem.self, from: oldTodo)

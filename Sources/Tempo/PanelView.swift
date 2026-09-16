@@ -66,8 +66,12 @@ struct PanelView: View {
             }
             .padding(16)
         }
-        // Opening the panel pulls done-state back from the Reminders app.
-        .onAppear { store.pullAppleReminderCompletions() }
+        // Opening the panel pulls done-state back from the Reminders app
+        // and clears "+" rows that were never filled in.
+        .onAppear {
+            store.pruneBlankTodos()
+            store.pullAppleReminderCompletions()
+        }
     }
 
     private var tabBar: some View {
@@ -181,6 +185,8 @@ struct TodoSection: View {
             }
             if todos.count < AppConfig.maxTodos {
                 Button {
+                    // One empty row at a time — type in the one you have.
+                    guard !todos.contains(where: \.isBlank) else { return }
                     store.config.todos.append(TodoItem(text: ""))
                 } label: {
                     Label(dropTargeted ? "Drop to add" : "Add a task — for file drops, open the Shelf (tray icon below)",
@@ -208,6 +214,8 @@ struct TodoSection: View {
         } isTargeted: { targeted in
             dropTargeted = targeted
         }
+        // Switching tabs also clears never-filled rows.
+        .onDisappear { store.pruneBlankTodos() }
     }
 
     private func todoRow(_ todo: TodoItem) -> some View {
@@ -226,6 +234,8 @@ struct TodoSection: View {
                     .textFieldStyle(.plain)
                     .font(.system(.subheadline, design: .rounded))
                     .foregroundStyle(todo.done ? .secondary : .primary)
+                    // Enter on an empty row removes it.
+                    .onSubmit { store.pruneBlankTodos() }
                 Button {
                     openDuePopover(todo)
                 } label: {

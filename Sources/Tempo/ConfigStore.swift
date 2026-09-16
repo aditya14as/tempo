@@ -38,6 +38,13 @@ final class ConfigStore: ObservableObject {
         }
     }
 
+    /// Drops "+" rows that were never filled in.
+    func pruneBlankTodos() {
+        if config.todos.contains(where: \.isBlank) {
+            config.todos.removeAll(where: \.isBlank)
+        }
+    }
+
     /// Pulls completed-state from Apple Reminders (called when the panel opens):
     /// a task finished in the Reminders app gets checked off here, and one
     /// re-opened there re-opens here.
