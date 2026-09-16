@@ -42,7 +42,11 @@ final class ShelfWindow {
         guard let panel else { return }
         onScreen = true
         position(panel)
-        panel.alphaValue = 0
+        // Near-invisible, but NOT zero: a fully transparent window is skipped
+        // by drag hit-testing, so it would never receive the drop. 2% opacity
+        // is imperceptible yet keeps the card a legal drop target from the
+        // instant the mouse goes down.
+        panel.alphaValue = 0.02
         panel.orderFrontRegardless()
     }
 
@@ -197,8 +201,6 @@ final class ShelfWindow {
         }
         x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
-        FileDropView.log("shelf positioned topLeft=(\(x), \(top)) icon=\(String(describing: icon))",
-                         pasteboard: NSPasteboard(name: .drag))
     }
 
     /// The MenuBarExtra popover, if it's currently on screen: a visible app
