@@ -45,7 +45,7 @@ final class ShelfWindow {
         }
     }
 
-    /// Whether a given window is the Shelf card — so the panel aligner can
+    /// Whether a given window is the Shelf card — lets the panel aligner
     /// tell the Shelf apart from the menu bar dropdown.
     func isShelf(_ window: NSWindow) -> Bool { window === panel }
 

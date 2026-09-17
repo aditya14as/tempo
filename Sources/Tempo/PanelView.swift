@@ -34,6 +34,11 @@ struct PanelView: View {
             }
         }
         .frame(width: 360)
+        // Hand our window and laid-out size to PanelAligner so it can keep
+        // the dropdown fitted to the content and hugging the menu bar icon —
+        // the MenuBarExtra window otherwise keeps the first tab's height
+        // forever and floats shorter tabs in the middle of it.
+        .background(PanelWindowTracker())
     }
 
     private var progressContent: some View {
