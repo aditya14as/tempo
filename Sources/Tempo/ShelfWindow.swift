@@ -13,27 +13,36 @@ final class ShelfWindow {
     /// True while the card is opaque because the user opened it or it just
     /// caught a drop (versus merely lit up under a passing drag).
     private var open = false
-    /// Quiet 0.2s ticks; after ~8s an opened card dims back to invisible.
+    /// True while the card is up purely because a drag is in flight; if the
+    /// drag ends without a drop landing, it tucks itself away again.
+    private var revealedByDrag = false
+    /// Where an opened card belongs: under the icon (clicked open) or at the
+    /// safe centered spot (popped for a drag, and where a caught drop stays).
+    private enum Anchor { case icon, safe }
+    private var anchor: Anchor = .icon
+    /// Quiet ticks; after ~8s an opened card dims back to invisible.
     private var idleTicks = 0
-    /// The card is ALWAYS on-screen, at 2% opacity and click-through when
-    /// idle. Being a drop target is passive — a registered, visible window
-    /// receives drags with no special permission and no timing games — so
-    /// leaving it parked in place (invisible, letting clicks pass through)
-    /// means it catches a drag the instant one crosses it. Full opacity is
-    /// only for when there's something to look at.
+    /// When idle the card is parked here — ordered-in (so it stays in the
+    /// window list and can catch the very next drag) but off-screen, at 2%
+    /// opacity and click-through. A visible-but-2%-alpha window sits BELOW
+    /// macOS's drag-target threshold and silently receives no drops, so the
+    /// card is only a real target once a drag pops it to full opacity.
     private static let idleAlpha: CGFloat = 0.02
+    private static let offscreen = NSPoint(x: -20000, y: -20000)
 
-    /// Build the card and leave it sitting under the icon, invisible.
+    /// Build the card and tuck it away, ready for the first drag.
     func prewarm(store: ConfigStore) {
         ensurePanel(store: store)
         goIdle()
     }
 
-    /// The card's live drop area, so callers (idle timer) can reposition it
-    /// if the icon shifts.
+    /// Keep an opened card pinned to its anchor if the menu bar shifts.
     func reposition() {
-        guard let panel, !open else { return }
-        position(panel)
+        guard let panel, open, !revealedByDrag else { return }
+        switch anchor {
+        case .icon: position(panel)
+        case .safe: positionSafe(panel)
+        }
     }
 
     func toggle(store: ConfigStore) {
@@ -54,47 +63,76 @@ final class ShelfWindow {
         showOpen(store: store)
     }
 
-    /// Legacy name kept for callers: same as reveal.
-    func revealForFileDrag(store: ConfigStore) {
-        // A passing drag lights the card up via `dragHover`; nothing to do
-        // here anymore, but keep the entry point so old call sites compile.
+    /// A file drag just began somewhere: pop the card up full-opacity and
+    /// interactive at a safe, centered spot (clear of the top edge, so the
+    /// user never has to drag into the Mission-Control zone) so the drop
+    /// actually lands. The card already exists and is ordered-in, so it's in
+    /// the drag's target set; raising its opacity is what makes it catch.
+    func revealForDrag(store: ConfigStore) {
+        ensurePanel(store: store)
+        guard let panel else { return }
+        revealedByDrag = true
+        open = false
+        idleTicks = 0
+        anchor = .safe
+        DropGlow.shared.dragInFlight = true
+        dropView?.passesClicksThrough = false
+        positionSafe(panel)
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
     }
 
-    /// A drag is now hovering the card: make it fully visible so the drop
-    /// target is obvious. It stays click-through (a drag isn't a click).
+    /// Legacy name kept for old call sites: same as revealForDrag.
+    func revealForFileDrag(store: ConfigStore) { revealForDrag(store: store) }
+
+    /// A drag is now hovering the card: keep it fully visible.
     func dragHover(_ entered: Bool) {
         guard let panel else { return }
         DropGlow.shared.targeted = entered
         if entered {
             panel.alphaValue = 1
             idleTicks = 0
-        } else if !open {
+        } else if !open && !revealedByDrag {
             panel.alphaValue = Self.idleAlpha
         }
     }
 
-    /// A drop landed: keep the card visible and interactive so you can see
-    /// what you caught and drag it back out; the idle timer dims it later.
+    /// A drop landed: keep the card up and interactive where it is, so you
+    /// can see what you caught and drag it back out; it dims later when idle.
     func noteDrop() {
         open = true
+        revealedByDrag = false
         idleTicks = 0
+        DropGlow.shared.dragInFlight = false
         guard let panel else { return }
         panel.alphaValue = 1
         dropView?.passesClicksThrough = false
     }
 
-    func fileDragEnded() {}
+    /// The in-flight drag ended. If nothing landed (the card was up only as a
+    /// drop target), tuck it away again shortly; a drop sets `open`, keeping
+    /// it up. The short delay lets a just-released drop finish delivering.
+    func fileDragEnded() {
+        DropGlow.shared.dragInFlight = false
+        DropGlow.shared.targeted = false
+        guard revealedByDrag, !open else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self else { return }
+            if self.revealedByDrag && !self.open { self.goIdle() }
+        }
+    }
+
     func prime(store: ConfigStore) {}
     func unprimeIfIdle() {}
 
-    /// Called ~5×/sec. An opened card dims back to invisible after ~8 quiet
+    /// Called ~25×/sec. An opened card dims back to invisible after ~8 quiet
     /// seconds; hovering it or a drag in flight resets the countdown.
     func tickIdle(dragActive: Bool) {
-        reposition()
         guard let panel, open else {
             idleTicks = 0
             return
         }
+        reposition()
         let busy = dragActive
             || DropGlow.shared.targeted
             || panel.frame.insetBy(dx: -20, dy: -20).contains(NSEvent.mouseLocation)
@@ -103,28 +141,38 @@ final class ShelfWindow {
             return
         }
         idleTicks += 1
-        if idleTicks >= 40 {
+        if idleTicks >= 200 {  // ~8s at 40ms/tick
             idleTicks = 0
             goIdle()
         }
     }
 
-    /// Invisible, click-through, still catching drags — the resting state.
+    /// The resting state: ordered-in (so it can catch the next drag) but
+    /// parked off-screen, invisible and click-through.
     private func goIdle() {
         guard let panel else { return }
         open = false
+        revealedByDrag = false
+        idleTicks = 0
+        anchor = .icon
+        DropGlow.shared.dragInFlight = false
+        DropGlow.shared.targeted = false
         dropView?.passesClicksThrough = true
-        position(panel)
         panel.alphaValue = Self.idleAlpha
+        panel.setFrameOrigin(Self.offscreen)
         panel.orderFrontRegardless()
     }
 
-    /// Opaque and interactive.
+    /// Opaque and interactive, under the menu bar icon — used when the user
+    /// clicks the tray button to open the shelf (no drag, no top-edge risk).
     private func showOpen(store: ConfigStore) {
         ensurePanel(store: store)
         guard let panel else { return }
         open = true
+        revealedByDrag = false
         idleTicks = 0
+        anchor = .icon
+        DropGlow.shared.dragInFlight = false
         dropView?.passesClicksThrough = false
         position(panel)
         panel.alphaValue = 1
@@ -184,6 +232,25 @@ final class ShelfWindow {
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
     }
 
+    /// Where the card pops for a drag: horizontally centered and tucked a bit
+    /// below the menu bar — deliberately CLEAR of the very top edge, because
+    /// dragging to the top edge is what makes macOS open Mission Control
+    /// instead of letting the drop land.
+    private func positionSafe(_ panel: NSPanel) {
+        let width = panel.frame.width
+        let icon = StatusItemDropper.iconScreenFrame()
+        let screen = NSScreen.screens.first { $0.frame.intersects(icon ?? .zero) } ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        let x = visible.midX - width / 2
+        // visibleFrame already excludes the menu bar; drop another 44pt so the
+        // target sits well below the top edge / drag-to-spaces gesture zone.
+        let top = visible.maxY - 44
+        panel.setFrameTopLeftPoint(NSPoint(
+            x: max(visible.minX + 8, min(x, visible.maxX - width - 8)),
+            y: top
+        ))
+    }
+
     /// The MenuBarExtra popover, if it's currently on screen: a visible app
     /// window hugging the menu bar that isn't the shelf or the status item.
     private func menuBarPanelWindow() -> NSWindow? {
@@ -201,6 +268,10 @@ final class ShelfWindow {
 struct ShelfView: View {
     @EnvironmentObject var store: ConfigStore
     @ObservedObject private var glow = DropGlow.shared
+
+    /// True when a drag is in flight (card popped) or hovering the card — the
+    /// moment to show the "drop it here" invitation.
+    private var inviting: Bool { glow.targeted || glow.dragInFlight }
 
     private let columns = [GridItem(.adaptive(minimum: 68), spacing: 8)]
 
@@ -244,9 +315,9 @@ struct ShelfView: View {
                         }
                     }
                 }
-                Text(glow.targeted ? "Drop it on this card." : "Drag items out anywhere.")
+                Text(inviting ? "Drop it on this card." : "Drag items out anywhere.")
                     .font(.caption2)
-                    .foregroundStyle(glow.targeted ? .secondary : .tertiary)
+                    .foregroundStyle(inviting ? .secondary : .tertiary)
             }
         }
         .padding(14)
@@ -259,10 +330,10 @@ struct ShelfView: View {
             // top-of-screen drags for Mission Control, we can't stop it).
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
-                    glow.targeted
+                    inviting
                         ? AnyShapeStyle(store.config.theme.gradient)
                         : AnyShapeStyle(Color.primary.opacity(0.1)),
-                    lineWidth: glow.targeted ? 2.5 : 1
+                    lineWidth: inviting ? 2.5 : 1
                 )
                 .padding(0.5)
         )
@@ -273,15 +344,15 @@ struct ShelfView: View {
     private var emptyState: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-            .foregroundStyle(glow.targeted ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(.quaternary))
+            .foregroundStyle(inviting ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(.quaternary))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(
                 VStack(spacing: 6) {
-                    Image(systemName: glow.targeted ? "arrow.down.circle.fill" : "tray.and.arrow.down")
-                        .font(.system(size: glow.targeted ? 26 : 20))
-                    Text(glow.targeted ? "Drop it here!" : "Drop files or links here")
-                        .font(.system(.caption, design: .rounded).weight(glow.targeted ? .semibold : .regular))
-                    Text(glow.targeted ? "(the menu bar can't take drops)" : "then drag them out anywhere")
+                    Image(systemName: inviting ? "arrow.down.circle.fill" : "tray.and.arrow.down")
+                        .font(.system(size: inviting ? 26 : 20))
+                    Text(inviting ? "Drop it here!" : "Drop files or links here")
+                        .font(.system(.caption, design: .rounded).weight(inviting ? .semibold : .regular))
+                    Text(inviting ? "let go anywhere on this card" : "then drag them out anywhere")
                         .font(.system(size: 10, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }

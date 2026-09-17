@@ -116,7 +116,10 @@ enum DropPayload {
 @MainActor
 final class DropGlow: ObservableObject {
     static let shared = DropGlow()
+    /// A drag is directly over the card.
     @Published var targeted = false
+    /// A file drag is in flight anywhere — the card is up and inviting a drop.
+    @Published var dragInFlight = false
 }
 
 // MARK: - An AppKit drop target that accepts far more than SwiftUI's does
@@ -299,22 +302,71 @@ final class FileDropView: NSView {
 
 // MARK: - Keep the Shelf card placed and tidy
 
-/// The card catches drops on its own — it sits under the icon at all times,
-/// invisible and click-through, and lights up when a drag crosses it (no
-/// polling, no global monitors, no permissions). This just nudges it back
-/// under the icon if the menu bar shifts and dims it after it's been opened.
+/// Watches for a file drag starting anywhere and pops the Shelf card up as a
+/// full-opacity, centered drop target — because an invisible (2%-alpha) window
+/// sits below macOS's drag-target threshold and never receives the drop, and a
+/// target parked at the top edge fights the OS's drag-to-Mission-Control
+/// gesture. Detection is pure polling of the drag pasteboard's change count
+/// plus the mouse-button state, so it needs NO accessibility/monitoring
+/// permission (which ad-hoc re-signing on each build would strip anyway).
 @MainActor
 final class DragWatcher {
     static let shared = DragWatcher()
     private var timer: Timer?
+    private var lastDragChange = NSPasteboard(name: .drag).changeCount
+    private var dragActive = false
+
+    /// Pasteboard types that mean "a file or link is being dragged." Plain
+    /// `.string` is deliberately absent so dragging a text selection doesn't
+    /// pop the card; Electron editors (VS Code, Conductor) still trigger it via
+    /// their Chromium types even when the path itself rides in plain text.
+    private static let fileTypes: Set<NSPasteboard.PasteboardType> =
+        Set([.fileURL, .URL, DropPayload.legacyPaths,
+             NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
+             NSPasteboard.PasteboardType("Apple files promise pasteboard type")]
+            + FileDropView.chromiumTypes
+            + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
     func start() {
         guard timer == nil else { return }
-        let timer = Timer(timeInterval: 0.2, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { ShelfWindow.shared.tickIdle(dragActive: false) } }
+        let timer = Timer(timeInterval: 0.04, repeats: true) { _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { DragWatcher.shared.tick() } }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    private func tick() {
+        let pb = NSPasteboard(name: .drag)
+        let mouseDown = NSEvent.pressedMouseButtons & 1 == 1
+
+        if dragActive {
+            ShelfWindow.shared.tickIdle(dragActive: true)
+            if !mouseDown {  // drag finished — dropped somewhere or cancelled
+                dragActive = false
+                ShelfWindow.shared.fileDragEnded()
+            }
+            return
+        }
+
+        ShelfWindow.shared.tickIdle(dragActive: false)
+
+        // A fresh drag pasteboard + the button held down = a drag just began.
+        guard pb.changeCount != lastDragChange else { return }
+        lastDragChange = pb.changeCount
+        guard mouseDown, let types = pb.types, !types.isEmpty else { return }
+        // Register whatever custom types this app invented, or draggingEntered
+        // never fires for its drags (Zed, VS Code, Conductor each use own types).
+        FileDropView.acceptAlso(types)
+        FileDropView.log("dragstart", pasteboard: pb)
+        guard hasFiles(pb), let store = ConfigStore.shared else { return }
+        dragActive = true
+        ShelfWindow.shared.revealForDrag(store: store)
+    }
+
+    private func hasFiles(_ pb: NSPasteboard) -> Bool {
+        guard let types = pb.types else { return false }
+        return types.contains { Self.fileTypes.contains($0) }
     }
 }
 
