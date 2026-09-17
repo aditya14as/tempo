@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Pop the Shelf up automatically whenever a file drag starts.
         DragWatcher.shared.start()
+        // Nudge the menu bar dropdown under the icon (SwiftUI opens it offset).
+        PanelAligner.shared.start()
     }
 }
 
