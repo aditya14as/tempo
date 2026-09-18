@@ -289,9 +289,9 @@ final class FileDropView: NSView {
             Self.log("drop promise", pasteboard: pb)
             let dir = Self.dropsDirectory
             for receiver in receivers {
-                receiver.receivePromisedFiles(atDestination: dir, options: [:], operationQueue: Self.promiseQueue) { url, error in
+                receiver.receivePromisedFiles(atDestination: dir, options: [:], operationQueue: Self.promiseQueue) { [weak self] url, error in
                     guard error == nil else { return }
-                    DispatchQueue.main.async { [weak self] in
+                    DispatchQueue.main.async {
                         self?.onDrop?([url])
                         NSSound(named: "Pop")?.play()
                     }

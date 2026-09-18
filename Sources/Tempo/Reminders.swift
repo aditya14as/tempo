@@ -1,7 +1,7 @@
 import AppKit
 import EventKit
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 // MARK: - Due-date display (pure, covered by --check)
 
