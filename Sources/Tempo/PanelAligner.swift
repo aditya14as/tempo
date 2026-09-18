@@ -10,8 +10,8 @@ import SwiftUI
 /// floats vertically centered in that too-tall window, leaving a see-through
 /// gap under the menu bar. SwiftUI exposes no API for either, so PanelView
 /// hands us its window and its laid-out size, and we keep the window's frame
-/// fitted to that content: top edge under the menu bar, right edge under the
-/// icon's right edge (like the Wi-Fi and battery menus).
+/// fitted to that content: top edge under the menu bar, centered under the
+/// icon.
 @MainActor
 final class PanelAligner {
     static let shared = PanelAligner()
@@ -74,8 +74,8 @@ final class PanelAligner {
 
         let width = contentSize.width > 0 ? contentSize.width : window.frame.width
         let height = contentSize.height > 0 ? contentSize.height : window.frame.height
-        // Right edge under the icon's right edge, clamped on-screen.
-        var x = icon.maxX - width
+        // Centered under the icon, clamped on-screen.
+        var x = icon.midX - width / 2
         x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
         // Top edge just under the menu bar — the same spot SwiftUI hangs it.
         let top = visible.maxY - 2
