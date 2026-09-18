@@ -36,13 +36,11 @@ final class ShelfWindow {
         goIdle()
     }
 
-    /// Keep an opened card pinned to its anchor if the menu bar shifts.
+    /// Keep an opened card pinned under the icon if the menu bar shifts. A
+    /// card placed by a drag stays exactly where the drag put it.
     func reposition() {
-        guard let panel, open, !revealedByDrag else { return }
-        switch anchor {
-        case .icon: position(panel)
-        case .safe: positionSafe(panel)
-        }
+        guard let panel, open, !revealedByDrag, anchor == .icon else { return }
+        position(panel)
     }
 
     /// Whether a given window is the Shelf card — lets the panel aligner
@@ -68,10 +66,15 @@ final class ShelfWindow {
     }
 
     /// A file drag just began somewhere: pop the card up full-opacity and
-    /// interactive at a safe, centered spot (clear of the top edge, so the
-    /// user never has to drag into the Mission-Control zone) so the drop
-    /// actually lands. The card already exists and is ordered-in, so it's in
-    /// the drag's target set; raising its opacity is what makes it catch.
+    /// interactive so the drop actually lands. The card already exists and is
+    /// ordered-in, so it's in the drag's target set; raising its opacity is
+    /// what makes it catch. Where it goes depends on the pointer (see
+    /// `ShelfPlacement`): a centred spot just below the menu bar for a drag
+    /// picked up inside a window (Finder, VS Code), or — when the pointer is
+    /// already up in the menu bar (a Zed drag only reaches macOS once it
+    /// leaves Zed's window, and up is the natural exit) — right under the
+    /// pointer, over the bar, where `followDrag` then keeps it and where
+    /// `.stationary` keeps it visible even as Mission Control opens.
     func revealForDrag(store: ConfigStore) {
         ensurePanel(store: store)
         guard let panel else { return }
@@ -81,13 +84,29 @@ final class ShelfWindow {
         anchor = .safe
         DropGlow.shared.dragInFlight = true
         dropView?.passesClicksThrough = false
-        positionSafe(panel)
+        place(panel, forDragAt: NSEvent.mouseLocation)
         panel.alphaValue = 1
         panel.orderFrontRegardless()
     }
 
     /// Legacy name kept for old call sites: same as revealForDrag.
     func revealForFileDrag(store: ConfigStore) { revealForDrag(store: store) }
+
+    /// Called every drag tick. Once the pointer is up in the menu bar strip,
+    /// keep the card directly under it (sliding along as the pointer moves), so
+    /// wherever you let go in the bar the card is there to catch it — Mission
+    /// Control may flash open, but the stationary card stays put beneath the
+    /// cursor. Outside the bar the card is left where it first popped, so a
+    /// drag meant for another app isn't hijacked.
+    func followDrag() {
+        guard let panel, revealedByDrag, let screen = Self.screen(containing: NSEvent.mouseLocation)
+        else { return }
+        let cursor = NSEvent.mouseLocation
+        let inBar = ShelfPlacement.isInMenuBar(cursor: cursor, screen: screen.frame, visible: screen.visibleFrame)
+        if DropGlow.shared.pointerInMenuBar != inBar { DropGlow.shared.pointerInMenuBar = inBar }
+        guard inBar else { return }
+        place(panel, forDragAt: cursor)
+    }
 
     /// A drag is now hovering the card: keep it fully visible.
     func dragHover(_ entered: Bool) {
@@ -108,9 +127,20 @@ final class ShelfWindow {
         revealedByDrag = false
         idleTicks = 0
         DropGlow.shared.dragInFlight = false
+        DropGlow.shared.pointerInMenuBar = false
         guard let panel else { return }
         panel.alphaValue = 1
         dropView?.passesClicksThrough = false
+        // If the card caught the drop while sitting over the menu bar, slide it
+        // down flush under the bar so the bar is usable again — it stays open.
+        let cardScreen = Self.screen(containing: NSPoint(x: panel.frame.midX, y: panel.frame.maxY)) ?? NSScreen.main
+        guard let visible = cardScreen?.visibleFrame else { return }
+        let top = ShelfPlacement.settledTop(currentTop: panel.frame.maxY, visible: visible)
+        if top != panel.frame.maxY {
+            var frame = panel.frame
+            frame.origin.y = top - frame.height
+            panel.setFrame(frame, display: true, animate: true)
+        }
     }
 
     /// The in-flight drag ended. If nothing landed (the card was up only as a
@@ -119,6 +149,7 @@ final class ShelfWindow {
     func fileDragEnded() {
         DropGlow.shared.dragInFlight = false
         DropGlow.shared.targeted = false
+        DropGlow.shared.pointerInMenuBar = false
         guard revealedByDrag, !open else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self else { return }
@@ -161,6 +192,7 @@ final class ShelfWindow {
         anchor = .icon
         DropGlow.shared.dragInFlight = false
         DropGlow.shared.targeted = false
+        DropGlow.shared.pointerInMenuBar = false
         dropView?.passesClicksThrough = true
         panel.alphaValue = Self.idleAlpha
         panel.setFrameOrigin(Self.offscreen)
@@ -185,7 +217,7 @@ final class ShelfWindow {
 
     private func ensurePanel(store: ConfigStore) {
         guard panel == nil else { return }
-        let panel = NSPanel(
+        let panel = ShelfPanel(
             contentRect: NSRect(x: 0, y: 0, width: 264, height: 236),
             styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .utilityWindow],
             backing: .buffered, defer: false
@@ -199,7 +231,12 @@ final class ShelfWindow {
         panel.isMovableByWindowBackground = true
         // Above the menu bar popover, so it never hides behind the panel.
         panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // .stationary is the crux of a reliable menu-bar drop: a drag lingering
+        // at the top edge makes macOS open Mission Control, and a stationary
+        // window stays put and visible THROUGH Mission Control — so the card is
+        // still right there under the pointer to drop on, instead of vanishing
+        // into the windows overview.
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
@@ -236,23 +273,29 @@ final class ShelfWindow {
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
     }
 
-    /// Where the card pops for a drag: horizontally centered and tucked a bit
-    /// below the menu bar — deliberately CLEAR of the very top edge, because
-    /// dragging to the top edge is what makes macOS open Mission Control
-    /// instead of letting the drop land.
-    private func positionSafe(_ panel: NSPanel) {
-        let width = panel.frame.width
+    /// Places the card for a drag whose pointer is at `cursor`: centred below
+    /// the menu bar for an ordinary drag, or under the pointer and over the bar
+    /// once the pointer is up there (`ShelfPlacement.topLeft`).
+    private func place(_ panel: NSPanel, forDragAt cursor: NSPoint) {
         let icon = StatusItemDropper.iconScreenFrame()
-        let screen = NSScreen.screens.first { $0.frame.intersects(icon ?? .zero) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let x = visible.midX - width / 2
-        // visibleFrame already excludes the menu bar; drop another 44pt so the
-        // target sits well below the top edge / drag-to-spaces gesture zone.
-        let top = visible.maxY - 44
-        panel.setFrameTopLeftPoint(NSPoint(
-            x: max(visible.minX + 8, min(x, visible.maxX - width - 8)),
-            y: top
-        ))
+        let screen = Self.screen(containing: cursor)
+            ?? NSScreen.screens.first { $0.frame.intersects(icon ?? .zero) }
+            ?? NSScreen.main
+        guard let screen else { return }
+        let placed = ShelfPlacement.topLeft(
+            cardSize: panel.frame.size, cursor: cursor,
+            screen: screen.frame, visible: screen.visibleFrame
+        )
+        let current = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        if current != placed.point { panel.setFrameTopLeftPoint(placed.point) }
+    }
+
+    /// The display the pointer is on (inclusive of its edges), or nil off any.
+    private static func screen(containing point: NSPoint) -> NSScreen? {
+        NSScreen.screens.first {
+            let f = $0.frame
+            return point.x >= f.minX && point.x <= f.maxX && point.y >= f.minY && point.y <= f.maxY
+        }
     }
 
     /// The MenuBarExtra popover, if it's currently on screen: a visible app
@@ -269,6 +312,63 @@ final class ShelfWindow {
     }
 }
 
+/// The card's window. AppKit refuses by default to place a titled window over
+/// the menu bar (`constrainFrameRect` pulls it back under the bar) — but over
+/// the bar, under the pointer, is exactly where a menu-bar drop needs the card
+/// to be. Overriding the constraint lets the card go where it's told.
+final class ShelfPanel: NSPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
+
+/// Where the Shelf card pops for an in-flight drag. Pure geometry in Cocoa
+/// coordinates (origin bottom-left; `visible` is the screen minus the menu bar
+/// and Dock, `screen` the whole display), so `--check` pins it down with no
+/// windows involved.
+///
+/// Two spots:
+/// - `.belowBar`: horizontally centred, `topGap` points below the menu bar —
+///   the target for a drag picked up inside a window (Finder, VS Code), which
+///   reaches macOS immediately, so the card is up before the pointer moves.
+/// - `.overBar`: the pointer is up in the menu bar, so the card goes right
+///   under it and over the bar, the cursor already on it. A Zed drag only
+///   reaches macOS once it leaves Zed's window, and up into the bar is the
+///   natural exit; a drag lingering there opens Mission Control, so the card
+///   is `.stationary` (stays visible through it) and `followDrag` keeps it
+///   under the moving pointer. After a drop it slides below the bar
+///   (`settledTop`).
+enum ShelfPlacement {
+    enum Spot: Equatable { case belowBar, overBar }
+    static let inset: CGFloat = 8
+    static let topGap: CGFloat = 44
+    /// A maximized window stops a point short of the bar, so a pointer that has
+    /// just left it may be in that sliver; count it as already in the bar.
+    static let barSlack: CGFloat = 2
+
+    /// True when the pointer is in `screen`'s menu bar strip.
+    static func isInMenuBar(cursor: NSPoint, screen: NSRect, visible: NSRect) -> Bool {
+        cursor.x >= screen.minX && cursor.x <= screen.maxX
+            && cursor.y >= visible.maxY - barSlack && cursor.y <= screen.maxY
+    }
+
+    /// The card's top-left corner (minX, maxY) and which spot it is.
+    static func topLeft(
+        cardSize: NSSize, cursor: NSPoint, screen: NSRect, visible: NSRect
+    ) -> (point: NSPoint, spot: Spot) {
+        let w = cardSize.width
+        if isInMenuBar(cursor: cursor, screen: screen, visible: visible) {
+            let x = max(visible.minX + inset, min(cursor.x - w / 2, visible.maxX - w - inset))
+            return (NSPoint(x: x, y: screen.maxY), .overBar)
+        }
+        let x = max(visible.minX + inset, min(visible.midX - w / 2, visible.maxX - w - inset))
+        return (NSPoint(x: x, y: visible.maxY - topGap), .belowBar)
+    }
+
+    /// Where a card that caught a drop settles: never over the menu bar.
+    static func settledTop(currentTop: CGFloat, visible: NSRect) -> CGFloat {
+        min(currentTop, visible.maxY)
+    }
+}
+
 struct ShelfView: View {
     @EnvironmentObject var store: ConfigStore
     @ObservedObject private var glow = DropGlow.shared
@@ -276,6 +376,9 @@ struct ShelfView: View {
     /// True when a drag is in flight (card popped) or hovering the card — the
     /// moment to show the "drop it here" invitation.
     private var inviting: Bool { glow.targeted || glow.dragInFlight }
+    /// The pointer is up in the menu bar with the card under it: reassure that
+    /// letting go here works even though Mission Control may flash open.
+    private var inMenuBar: Bool { inviting && glow.pointerInMenuBar }
 
     private let columns = [GridItem(.adaptive(minimum: 68), spacing: 8)]
 
@@ -319,7 +422,8 @@ struct ShelfView: View {
                         }
                     }
                 }
-                Text(inviting ? "Drop it on this card." : "Drag items out anywhere.")
+                Text(inMenuBar ? "Let go here — the card stays put."
+                    : inviting ? "Drop it on this card." : "Drag items out anywhere.")
                     .font(.caption2)
                     .foregroundStyle(inviting ? .secondary : .tertiary)
             }
@@ -354,9 +458,10 @@ struct ShelfView: View {
                 VStack(spacing: 6) {
                     Image(systemName: inviting ? "arrow.down.circle.fill" : "tray.and.arrow.down")
                         .font(.system(size: inviting ? 26 : 20))
-                    Text(inviting ? "Drop it here!" : "Drop files or links here")
+                    Text(inMenuBar ? "Let go here" : inviting ? "Drop it here!" : "Drop files or links here")
                         .font(.system(.caption, design: .rounded).weight(inviting ? .semibold : .regular))
-                    Text(inviting ? "let go anywhere on this card" : "then drag them out anywhere")
+                    Text(inMenuBar ? "stays put even if Mission Control opens"
+                        : inviting ? "let go anywhere on this card" : "then drag them out anywhere")
                         .font(.system(size: 10, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }

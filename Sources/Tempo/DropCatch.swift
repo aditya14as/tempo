@@ -120,6 +120,10 @@ final class DropGlow: ObservableObject {
     @Published var targeted = false
     /// A file drag is in flight anywhere — the card is up and inviting a drop.
     @Published var dragInFlight = false
+    /// The dragging pointer is up in the menu bar with the card under it. The
+    /// card is `.stationary`, so it stays put and droppable even when the
+    /// top-edge drag opens Mission Control; the caption reassures the user.
+    @Published var pointerInMenuBar = false
 }
 
 // MARK: - An AppKit drop target that accepts far more than SwiftUI's does
@@ -342,6 +346,7 @@ final class DragWatcher {
 
         if dragActive {
             ShelfWindow.shared.tickIdle(dragActive: true)
+            ShelfWindow.shared.followDrag()
             if !mouseDown {  // drag finished — dropped somewhere or cancelled
                 dragActive = false
                 ShelfWindow.shared.fileDragEnded()

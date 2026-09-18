@@ -442,6 +442,43 @@ enum Checks {
         )
         fake.releaseGlobally()
 
+        // Where the drag card pops. Cocoa coords on a 1710x1112 notch display:
+        // 38pt menu bar, Dock hidden, so the usable area tops out at 1074.
+        let card = NSSize(width: 264, height: 236)
+        let screen = NSRect(x: 0, y: 0, width: 1710, height: 1112)
+        let visible = NSRect(x: 0, y: 0, width: 1710, height: 1074)
+        // A drag picked up inside a window (pointer not in the bar): centred,
+        // clear of the top edge.
+        let below = ShelfPlacement.topLeft(cardSize: card, cursor: NSPoint(x: 400, y: 600), screen: screen, visible: visible)
+        expect(
+            below.spot == .belowBar && below.point == NSPoint(x: 723, y: 1030),
+            "an in-window drag pops the card centred, 44pt below the menu bar"
+        )
+        // A drag up in the menu bar: card under the pointer, over the bar, top
+        // at the very top of the screen so the cursor is already on it.
+        let over = ShelfPlacement.topLeft(cardSize: card, cursor: NSPoint(x: 1000, y: 1090), screen: screen, visible: visible)
+        expect(
+            over.spot == .overBar && over.point == NSPoint(x: 868, y: 1112)
+                && over.point.x <= 1000 && over.point.x + card.width >= 1000,
+            "a drag in the menu bar puts the card under the pointer and over the bar"
+        )
+        // The one-point sliver a maximized window leaves below the bar counts as
+        // the bar (so a Zed drag that just exited upward is caught).
+        let sliver = ShelfPlacement.topLeft(cardSize: card, cursor: NSPoint(x: 1000, y: 1073.5), screen: screen, visible: visible)
+        expect(sliver.spot == .overBar, "the sliver between a maximized window and the bar counts as the bar")
+        // Near the screen edge the over-bar card stays on-screen and still spans the pointer.
+        let edge = ShelfPlacement.topLeft(cardSize: card, cursor: NSPoint(x: 1700, y: 1090), screen: screen, visible: visible)
+        expect(
+            edge.spot == .overBar && edge.point.x == 1438 && edge.point.x + card.width <= visible.maxX - 8 + 0.001,
+            "an over-bar card near the right edge stays fully on-screen"
+        )
+        // After a drop, an over-bar card settles flush under the bar; one below stays put.
+        expect(
+            ShelfPlacement.settledTop(currentTop: 1112, visible: visible) == 1074
+                && ShelfPlacement.settledTop(currentTop: 1030, visible: visible) == 1030,
+            "after a drop a card over the bar drops flush under it; one already below stays"
+        )
+
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1
     }
