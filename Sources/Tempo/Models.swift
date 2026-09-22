@@ -339,6 +339,10 @@ struct AppConfig: Codable, Equatable {
     var todos: [TodoItem] = []
     /// Files/links parked on the floating Shelf.
     var shelf: [ShelfItem] = []
+    /// Keep-awake sessions and triggers (the Amphetamine side of Tempo).
+    var awake = AwakeConfig()
+    /// The ⌥⇥ window switcher (the AltTab side of Tempo).
+    var switcher = SwitcherConfig()
 
     static let maxTodos = 5
     static let maxShelf = 12
@@ -364,6 +368,8 @@ struct AppConfig: Codable, Equatable {
         launchAtLogin = (try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)) ?? d.launchAtLogin
         todos = (try? c.decodeIfPresent([TodoItem].self, forKey: .todos)) ?? d.todos
         shelf = (try? c.decodeIfPresent([ShelfItem].self, forKey: .shelf)) ?? d.shelf
+        awake = c.value(.awake, or: d.awake)
+        switcher = c.value(.switcher, or: d.switcher)
     }
 
     func row(_ metric: Metric) -> RowConfig {

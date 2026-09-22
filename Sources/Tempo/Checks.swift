@@ -7,7 +7,7 @@ import Foundation
 enum Checks {
     private static var failures = 0
 
-    private static func expect(_ condition: Bool, _ label: String) {
+    static func expect(_ condition: Bool, _ label: String) {
         if condition {
             print("  ok  \(label)")
         } else {
@@ -16,7 +16,7 @@ enum Checks {
         }
     }
 
-    private static func expectClose(_ a: Double, _ b: Double, _ label: String, accuracy: Double = 0.0001) {
+    static func expectClose(_ a: Double, _ b: Double, _ label: String, accuracy: Double = 0.0001) {
         expect(abs(a - b) <= accuracy, "\(label) (got \(a), want \(b))")
     }
 
@@ -478,6 +478,32 @@ enum Checks {
                 && ShelfPlacement.settledTop(currentTop: 1030, visible: visible) == 1030,
             "after a drop a card over the bar drops flush under it; one already below stays"
         )
+
+        // Awake + Switcher settings round-trip, and a saved config from before
+        // they existed still decodes (with defaults).
+        var featured = AppConfig()
+        featured.awake.allowDisplaySleep = true
+        featured.awake.presets = [15, 45]
+        featured.awake.toggleShortcut = KeyCombo(keyCode: 0, modifiers: [.control, .option])
+        featured.awake.triggers.apps = [AppRef(bundleID: "com.apple.Music", name: "Music")]
+        featured.awake.session = AwakeSession(kind: .until(Date(timeIntervalSince1970: 1_800_000_000)))
+        featured.switcher.modifier = .control
+        featured.switcher.style = .titles
+        featured.switcher.hiddenApps = [AppRef(bundleID: "com.apple.Terminal", name: "Terminal")]
+        let featuredBack = (try? JSONEncoder().encode(featured)).flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
+        expect(featuredBack == featured, "awake and switcher settings survive save and load")
+        expect(featuredBack?.awake.toggleShortcut?.label == "⌃⌥A", "shortcut label renders modifiers then key")
+        expect(
+            featuredBack?.awake.session?.endsAt == Date(timeIntervalSince1970: 1_800_000_000),
+            "a timed awake session keeps its end time"
+        )
+        let preFeature = "{\"theme\":\"ocean\",\"awake\":{\"presets\":[5]},\"switcher\":{\"style\":\"bogus\"}}"
+        let partial = try? JSONDecoder().decode(AppConfig.self, from: Data(preFeature.utf8))
+        expect(partial?.theme == .ocean && partial?.awake.presets == [5], "partial awake settings keep what was saved")
+        expect(partial?.awake.notifyOnEnd == true && partial?.switcher.style == .thumbnails,
+            "missing or bad awake/switcher keys fall back to defaults")
+        expect(!KeyCombo(keyCode: 0, modifiers: []).isUsable && KeyCombo(keyCode: 122, modifiers: []).isUsable,
+            "a bare letter is not a usable shortcut; a bare function key is")
 
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1

@@ -36,6 +36,11 @@ echo "==> Installing to /Applications…"
 pkill -x Tempo 2>/dev/null || true   # quit a running copy so re-running upgrades it
 rm -rf /Applications/Tempo.app
 cp -R dist/Tempo.app /Applications/
+# The build is ad-hoc signed, so its code hash changes every time. macOS keeps
+# honouring the OLD hash in Privacy & Security, which silently breaks the
+# window switcher; clear the stale grants so Tempo asks again, cleanly.
+tccutil reset Accessibility com.ivy.tempo >/dev/null 2>&1 || true
+tccutil reset ScreenCapture com.ivy.tempo >/dev/null 2>&1 || true
 
 echo "==> Cleaning up…"
 cd /
@@ -46,4 +51,5 @@ open /Applications/Tempo.app
 
 echo ""
 echo "Done! Look for the 'T 87% · W 37%'-style item in your menu bar."
+echo "For the ⌥⇥ window switcher, allow Tempo under System Settings -> Privacy & Security -> Accessibility."
 echo "If macOS blocks it on first open: right-click Tempo.app in /Applications -> Open."
