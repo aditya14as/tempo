@@ -120,6 +120,8 @@ final class ReminderScheduler {
     nonisolated static let categoryID = "TEMPO_TODO"
 
     private let delegate = NotificationDelegate()
+    private var syncWork: DispatchWorkItem?
+    private let syncGeneration = Generation()
 
     /// UNUserNotificationCenter only works from a real .app bundle;
     /// `swift run` and `--check` must never touch it.
@@ -147,13 +149,26 @@ final class ReminderScheduler {
 
     /// Makes pending notifications mirror the task list: one per future due
     /// task. Also clears already-shown notifications for tasks now done/gone.
-    func sync(_ todos: [TodoItem], now: Date = Date()) {
+    /// Debounced: typing in a task changes `todos` on every keystroke.
+    func sync(_ todos: [TodoItem]) {
         guard available else { return }
+        syncWork?.cancel()
+        let work = DispatchWorkItem { MainActor.assumeIsolated { ReminderScheduler.shared.syncNow(todos) } }
+        syncWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    private func syncNow(_ todos: [TodoItem], now: Date = Date()) {
+        // Each pass is a chain of async callbacks; a newer pass makes an
+        // older one stand down, so it can't re-add a task deleted since.
+        let generation = syncGeneration.next()
         let pending = DueFormat.pendingReminders(todos, now: now)
         let activeIDs = Set(todos.filter { !$0.done }.map { Self.idPrefix + $0.id.uuidString })
         let center = UNUserNotificationCenter.current()
+        let latest = syncGeneration
         let apply: @Sendable (Bool) -> Void = { granted in
             center.getPendingNotificationRequests { requests in
+                guard latest.isCurrent(generation) else { return }
                 let ours = requests.map(\.identifier).filter { $0.hasPrefix(Self.idPrefix) }
                 center.removePendingNotificationRequests(withIdentifiers: ours)
                 guard granted else { return }
@@ -283,5 +298,24 @@ enum AppleReminders {
             }
             completion(map)
         }
+    }
+}
+
+/// A counter the notification callbacks can read from any thread.
+final class Generation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
+    }
+
+    func isCurrent(_ generation: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value == generation
     }
 }

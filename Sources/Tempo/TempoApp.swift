@@ -10,17 +10,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Build the Shelf now and park it off-screen, so it already exists
         // (a legal drop target) before the first drag — a window shown only
         // after a drag starts can never receive that drag's drop.
-        if let store = ConfigStore.shared {
-            startFeatures(store)
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let store = ConfigStore.shared { self.startFeatures(store) }
-            }
-        }
+        startFeaturesWhenReady()
         // Pop the Shelf up automatically whenever a file drag starts.
         DragWatcher.shared.start()
         // Nudge the menu bar dropdown under the icon (SwiftUI opens it offset).
         PanelAligner.shared.start()
+    }
+
+    /// The store is created by SwiftUI; keep checking until it exists, since
+    /// the Shelf, Awake and the switcher all start from it.
+    @MainActor
+    private func startFeaturesWhenReady() {
+        guard let store = ConfigStore.shared else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.startFeaturesWhenReady() }
+            return
+        }
+        startFeatures(store)
     }
 
     @MainActor
@@ -44,7 +49,8 @@ enum TempoMain {
 struct TempoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = ConfigStore()
-    @StateObject private var ticker = Ticker()
+    // Every 10 s, so the menu bar's Awake countdown is never a minute off.
+    @StateObject private var ticker = Ticker(interval: 10)
 
     var body: some Scene {
         MenuBarExtra {

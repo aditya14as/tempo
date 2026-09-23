@@ -359,6 +359,7 @@ struct AwakeTab: View {
     }
 
     @ObservedObject private var lid = ClosedLid.shared
+    @ObservedObject private var drives = DriveKeeper.shared
 
     @ViewBuilder
     private var closedLidDetail: some View {
@@ -400,7 +401,7 @@ struct AwakeTab: View {
     }
 
     private var drivesDetail: some View {
-        let mounted = DriveKeeper.externalVolumes()
+        let mounted = drives.mounted
         return VStack(alignment: .leading, spacing: 6) {
             TagChips(items: awake.drives, theme: theme, addLabel: awake.drives.isEmpty ? "Only some…" : "Add drive") {
                 Text($0.name)

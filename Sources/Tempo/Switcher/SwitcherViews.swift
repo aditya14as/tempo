@@ -64,7 +64,8 @@ final class SwitcherModel: ObservableObject {
 
     func index(at point: CGPoint) -> Int? {
         if let viewport = scrollHeight != nil ? viewport : nil, !viewport.contains(point) { return nil }
-        return cardFrames.first { $0.value.contains(point) }?.key
+        // Frames arrive a beat after the list changes; never return a stale index.
+        return cardFrames.first { items.indices.contains($0.key) && $0.value.contains(point) }?.key
     }
 }
 
@@ -160,8 +161,9 @@ struct SwitcherView: View {
             grid(width: SwitcherMetrics.iconCell) { index, item in IconCard(model: model, index: index, item: item) }
         case .titles:
             VStack(spacing: 2) {
-                ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                    ListRow(model: model, index: index, item: item)
+                // By position, like the grid: the row drawn at i is always items[i].
+                ForEach(model.items.indices, id: \.self) { index in
+                    ListRow(model: model, index: index, item: model.items[index])
                         .id(index)
                         .background(frameReporter(index))
                 }
@@ -170,15 +172,24 @@ struct SwitcherView: View {
         }
     }
 
+    /// A plain (not lazy) grid: LazyVGrid reuses cells by position and, when
+    /// the list changes while the panel is hidden, can keep drawing the old
+    /// cards — so the highlight and the pointer land on the wrong window.
     private func grid<Card: View>(width: CGFloat, @ViewBuilder card: @escaping (Int, SwitchItem) -> Card) -> some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.fixed(width), spacing: SwitcherMetrics.spacing), count: max(1, model.columns)),
-            spacing: SwitcherMetrics.spacing
-        ) {
-            ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                card(index, item)
-                    .id(index)
-                    .background(frameReporter(index))
+        let columns = max(1, model.columns)
+        let rows = stride(from: 0, to: model.items.count, by: columns).map { start in
+            Array(start..<min(start + columns, model.items.count))
+        }
+        return VStack(alignment: .leading, spacing: SwitcherMetrics.spacing) {
+            ForEach(rows, id: \.self) { row in
+                HStack(spacing: SwitcherMetrics.spacing) {
+                    ForEach(row, id: \.self) { index in
+                        card(index, model.items[index])
+                            .frame(width: width)
+                            .id(index)
+                            .background(frameReporter(index))
+                    }
+                }
             }
         }
     }
@@ -192,7 +203,7 @@ struct SwitcherView: View {
     private var hints: some View {
         HStack(spacing: 12) {
             hint("⇥", "next")
-            hint("⇧", "back")
+            hint("⇧⇥", "back")
             hint("↩", "open")
             hint("W", "close")
             hint("M", "minimize")

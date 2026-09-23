@@ -16,7 +16,11 @@ final class SwitcherTrigger: @unchecked Sendable {
     private var appWindowsKey = true
     /// A session is open: its own tap handles every key until it ends.
     private var active = false
+    /// The session's tap is listening. Between the catch and that, a second
+    /// ⇥ would slip through to the front app, so it's caught here instead.
+    private var live = false
     private var port: CFMachPort?
+    private var runLoop: CFRunLoop?
     private var started = false
 
     /// Starts the tap thread once; returns false if the tap couldn't be made
@@ -40,6 +44,7 @@ final class SwitcherTrigger: @unchecked Sendable {
             )
             lock.lock()
             port = tap
+            runLoop = CFRunLoopGetCurrent()
             lock.unlock()
             ready.signal()
             guard let tap else { return }
@@ -68,7 +73,28 @@ final class SwitcherTrigger: @unchecked Sendable {
     func setActive(_ active: Bool) {
         lock.lock()
         self.active = active
+        if !active { live = false }
         lock.unlock()
+    }
+
+    func setLive(_ live: Bool) {
+        lock.lock()
+        self.live = live
+        lock.unlock()
+    }
+
+    /// Accessibility was revoked: the tap is dead. `start()` makes a new one.
+    func stop() {
+        lock.lock()
+        let port = port, runLoop = runLoop
+        self.port = nil
+        self.runLoop = nil
+        started = false
+        active = false
+        live = false
+        lock.unlock()
+        if let port { CFMachPortInvalidate(port) }
+        if let runLoop { CFRunLoopStop(runLoop) }
     }
 
     /// Returns true to swallow the event. Runs on the tap thread.
@@ -85,16 +111,24 @@ final class SwitcherTrigger: @unchecked Sendable {
         guard code == kVK_Tab || code == kVK_ANSI_Grave else { return false }
         lock.lock()
         defer { lock.unlock() }
-        guard enabled, !active else { return false }
+        guard enabled else { return false }
         let held = event.flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-        guard held == modifier else { return false }
+        // The hold key, optionally with ⇧ (open going backwards).
+        guard held == modifier || held == modifier.union(.maskShift) else { return false }
         let appOnly = code == kVK_ANSI_Grave
         if appOnly && !appWindowsKey { return false }
+        let back = held.contains(.maskShift)
+        if active {
+            // Session starting but its tap isn't listening yet: take the step here.
+            guard !live else { return false }
+            DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.earlyStep(back: back) } }
+            return true
+        }
         active = true
         let caught = CACurrentMediaTime()
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                SwitcherController.shared.triggered(appOnly: appOnly, latency: CACurrentMediaTime() - caught)
+                SwitcherController.shared.triggered(appOnly: appOnly, reverse: back, latency: CACurrentMediaTime() - caught)
             }
         }
         return true

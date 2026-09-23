@@ -147,6 +147,9 @@ final class FileDropView: NSView {
     var onAnyDrop: (() -> Void)?
     /// When set, plain clicks fall through to the status bar button below.
     weak var forwardClicksTo: NSStatusBarButton?
+    /// Refuse drops while false, so the drag slides back instead of
+    /// "landing" nowhere.
+    var accepts: () -> Bool = { true }
 
     /// Chromium/Electron drags (Conductor, VS Code, browsers) tag themselves
     /// with these — registering them lets those drags in even when no plain
@@ -227,17 +230,18 @@ final class FileDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard accepts() else { return [] }
         Self.log("enter@\(name) mask=\(sender.draggingSourceOperationMask.rawValue)", pasteboard: sender.draggingPasteboard)
         onTargeted?(true)
         return operation(for: sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        operation(for: sender)
+        accepts() ? operation(for: sender) : []
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        true
+        accepts()
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -267,6 +271,7 @@ final class FileDropView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         onTargeted?(false)
+        guard accepts() else { return false }
         onAnyDrop?()
         let pb = sender.draggingPasteboard
 
@@ -371,8 +376,18 @@ final class DragWatcher {
         FileDropView.acceptAlso(types)
         FileDropView.log("dragstart", pasteboard: pb)
         guard hasFiles(pb), let store = ConfigStore.shared else { return }
+        // A drag out of Tempo itself (a Shelf tile, the permission guide's
+        // icon, a task's attachment) is headed somewhere else: don't pop the
+        // card over its destination.
+        guard !Self.startedInTempo(at: NSEvent.mouseLocation) else { return }
         dragActive = true
         ShelfWindow.shared.revealForDrag(store: store)
+    }
+
+    private static func startedInTempo(at point: NSPoint) -> Bool {
+        NSApp.windows.contains { window in
+            window.isVisible && window.alphaValue > 0.5 && window.frame.contains(point)
+        }
     }
 
     private func hasFiles(_ pb: NSPasteboard) -> Bool {
@@ -416,6 +431,7 @@ enum StatusItemDropper {
         drop.name = "icon"
         drop.autoresizingMask = [.width, .height]
         drop.forwardClicksTo = button
+        drop.accepts = { ConfigStore.shared?.config.features.shelf ?? true }
         drop.onDrop = { urls in
             guard let store = ConfigStore.shared, store.config.features.shelf else { return }
             store.addToShelf(urls)

@@ -137,5 +137,13 @@ enum AwakeChecks {
         Checks.expect(DriveKeeper.targets(drives, mounted: [a, b]) == [a, b], "no drives picked means every external drive")
         drives.drives = [b, DriveRef(id: "C", name: "Gone", path: "/Volumes/Gone")]
         Checks.expect(DriveKeeper.targets(drives, mounted: [a, b]) == [b], "picked drives only, and only if mounted")
+
+        // The nudge stops where the display would have slept
+        let pmset = "System-wide power settings:\nCurrently in use:\n standby              1\n displaysleep         20\n sleep                1\n"
+        Checks.expect(CursorNudger.parseDisplaySleep(pmset) == 1200, "display sleep read from pmset in seconds")
+        Checks.expect(CursorNudger.parseDisplaySleep(" displaysleep         0\n") == nil,
+                      "display sleep 'never' means no limit on nudging")
+        Checks.expect(CursorNudger.parseDisplaySleep(" displaysleep         10 (display sleep prevented by Tempo)\n") == 600,
+                      "display sleep parsed even with pmset's annotation")
     }
 }

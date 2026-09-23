@@ -54,50 +54,118 @@ final class ClosedLid: ObservableObject {
 
     /// After a crash the watchdog has already reset sleep; this covers the
     /// rare case where it couldn't (e.g. the rule was removed meanwhile).
+    /// The marker stays set until an "off" has actually worked.
     func recoverAtLaunch() {
         installed = FileManager.default.fileExists(atPath: Self.sudoersPath)
-        if UserDefaults.standard.bool(forKey: Self.markerKey) {
-            run(disable: false, wait: true)
+        guard UserDefaults.standard.bool(forKey: Self.markerKey) else { return }
+        wanted.set(false)
+        if Self.queue.sync(execute: { Self.applyLatest(wanted) }).ok {
             UserDefaults.standard.set(false, forKey: Self.markerKey)
         }
     }
 
     /// Brings `pmset disablesleep` in line with what the engine wants.
+    /// After an "on" fails it isn't retried until the session ends (or the
+    /// rule is set up again), rather than every few seconds.
     func set(_ on: Bool) {
-        let want = on && installed
+        if !on { failedOn = false }
+        let want = on && installed && !failedOn
         guard want != active else { return }
         active = want
-        UserDefaults.standard.set(want, forKey: Self.markerKey)
+        wanted.set(want)
         if want {
-            run(disable: true, wait: false)
+            UserDefaults.standard.set(true, forKey: Self.markerKey)
             startWatchdog()
         } else {
             stopWatchdog()
-            run(disable: false, wait: false)
+        }
+        let wanted = wanted
+        Self.queue.async {
+            let result = Self.applyLatest(wanted)
+            DispatchQueue.main.async { MainActor.assumeIsolated { ClosedLid.shared.finished(result) } }
         }
     }
 
-    /// Quitting: switch it off before the process goes away.
+    /// Quitting: switch it off before the process goes away (after any
+    /// command still in flight, so a late "on" can't win).
     func shutdown() {
-        guard active else { return }
+        guard active || UserDefaults.standard.bool(forKey: Self.markerKey) else { return }
         active = false
         stopWatchdog()
-        run(disable: false, wait: true)
-        UserDefaults.standard.set(false, forKey: Self.markerKey)
+        wanted.set(false)
+        if Self.queue.sync(execute: { Self.applyLatest(wanted) }).ok {
+            UserDefaults.standard.set(false, forKey: Self.markerKey)
+        }
     }
 
-    private func run(disable: Bool, wait: Bool) {
+    /// One `pmset` at a time, always for the latest wanted state: an "on"
+    /// can never land after a later "off".
+    nonisolated private static let queue = DispatchQueue(label: "com.ivy.tempo.closed-lid")
+    private let wanted = Wanted()
+    private var failedOn = false
+
+    final class Wanted: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set(_ on: Bool) { lock.lock(); value = on; lock.unlock() }
+        func get() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
+    }
+
+    struct Result: Sendable {
+        var disabled: Bool
+        var ok: Bool
+    }
+
+    nonisolated private static func applyLatest(_ wanted: Wanted) -> Result {
+        let disable = wanted.get()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        process.arguments = ["-n", Self.pmset, "-a", "disablesleep", disable ? "1" : "0"]
+        process.arguments = ["-n", pmset, "-a", "disablesleep", disable ? "1" : "0"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()
-            if wait { process.waitUntilExit() }
+            process.waitUntilExit()
+            return Result(disabled: disable, ok: process.terminationStatus == 0)
         } catch {
-            lastError = "Couldn't run pmset: \(error.localizedDescription)"
+            return Result(disabled: disable, ok: false)
         }
+    }
+
+    /// Shows what really happened, and keeps the "turn it back off" marker
+    /// until an off has succeeded.
+    private func finished(_ result: Result) {
+        guard result.disabled == wanted.get() else { return }  // a newer command follows
+        if result.ok {
+            lastError = nil
+            if !result.disabled {
+                UserDefaults.standard.set(false, forKey: Self.markerKey)
+                // Ended with the lid already shut and no display: macOS won't
+                // sleep until the lid is opened and closed again, so ask now.
+                if Self.lidClosed && NSScreen.screens.isEmpty { Self.sleepNow() }
+            }
+            return
+        }
+        installed = FileManager.default.fileExists(atPath: Self.sudoersPath)
+        if result.disabled {
+            lastError = "Couldn't switch sleep off. Remove and set up closed-lid mode again."
+            failedOn = true
+            active = false
+            wanted.set(false)
+            stopWatchdog()
+            UserDefaults.standard.set(false, forKey: Self.markerKey)
+        } else {
+            lastError = "Couldn't switch sleep back on. Tempo will retry at next launch; or run: sudo pmset -a disablesleep 0"
+        }
+    }
+
+    private static func sleepNow() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: pmset)
+        process.arguments = ["sleepnow"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
     }
 
     private func startWatchdog() {
@@ -105,8 +173,9 @@ final class ClosedLid: ObservableObject {
         let pid = getpid()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        // Ignores the Ctrl-C / hang-up that may take Tempo down with it.
         process.arguments = ["-c",
-            "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 2; done; /usr/bin/sudo -n \(Self.pmset) -a disablesleep 0"]
+            "trap '' INT HUP; while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 2; done; /usr/bin/sudo -n \(Self.pmset) -a disablesleep 0"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try? process.run()
@@ -141,6 +210,7 @@ final class ClosedLid: ObservableObject {
         runPrivileged(script, prompt: "Tempo wants to keep your Mac awake with the lid closed.") { ok in
             self.installed = FileManager.default.fileExists(atPath: Self.sudoersPath)
             if ok && !self.installed { self.lastError = "The rule didn't install." }
+            if self.installed { self.failedOn = false }
             AwakeEngine.shared.refresh()
         }
     }
@@ -198,24 +268,52 @@ final class ClosedLid: ObservableObject {
 /// Keeps external drives from spinning down by writing a tiny hidden file
 /// to each one every minute while a session runs (Amphetamine's Drive Alive).
 @MainActor
-final class DriveKeeper {
+final class DriveKeeper: ObservableObject {
     static let shared = DriveKeeper()
     nonisolated static let fileName = ".tempo-drive-alive"
     static let interval: TimeInterval = 60
 
     private var lastWrite: Date = .distantPast
     private var touched: Set<String> = []
+    /// A write is still out (a waking drive can take a while); don't stack more.
+    private var writing = false
+    /// The last drive listing, for the settings menu. Refreshed off the main
+    /// thread on mount/unmount, since a slow disk can take seconds to answer.
+    @Published private(set) var mounted: [DriveRef] = []
+    private var watching = false
 
-    /// Mounted, writable drives that aren't the internal disk.
-    static func externalVolumes() -> [DriveRef] {
+    /// Starts keeping `mounted` current.
+    func watchVolumes() {
+        guard !watching else { return }
+        watching = true
+        refreshVolumes()
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
+            ws.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { DriveKeeper.shared.refreshVolumes() }
+            }
+        }
+    }
+
+    private func refreshVolumes() {
+        DispatchQueue.global(qos: .utility).async {
+            let volumes = Self.externalVolumes()
+            DispatchQueue.main.async { MainActor.assumeIsolated { DriveKeeper.shared.mounted = volumes } }
+        }
+    }
+
+    /// Mounted, writable, local drives that aren't the internal disk
+    /// (network shares and disk images on servers are left alone).
+    nonisolated static func externalVolumes() -> [DriveRef] {
         let keys: [URLResourceKey] = [.volumeNameKey, .volumeIsInternalKey, .volumeIsRootFileSystemKey,
-                                      .volumeUUIDStringKey, .volumeIsReadOnlyKey, .volumeIsBrowsableKey]
+                                      .volumeUUIDStringKey, .volumeIsReadOnlyKey, .volumeIsBrowsableKey,
+                                      .volumeIsLocalKey]
         let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys,
                                                          options: [.skipHiddenVolumes]) ?? []
         return urls.compactMap { url in
             guard let v = try? url.resourceValues(forKeys: Set(keys)),
                 v.volumeIsRootFileSystem != true, v.volumeIsInternal != true,
-                v.volumeIsReadOnly != true, v.volumeIsBrowsable != false,
+                v.volumeIsReadOnly != true, v.volumeIsBrowsable != false, v.volumeIsLocal == true,
                 url.path.hasPrefix("/Volumes/")
             else { return nil }
             return DriveRef(id: v.volumeUUIDString ?? url.path, name: v.volumeName ?? url.lastPathComponent,
@@ -237,13 +335,17 @@ final class DriveKeeper {
             cleanUp()
             return
         }
-        guard now.timeIntervalSince(lastWrite) >= Self.interval else { return }
+        guard now.timeIntervalSince(lastWrite) >= Self.interval, !writing else { return }
         lastWrite = now
-        let paths = Self.targets(config, mounted: Self.externalVolumes()).map(\.path)
-        touched.formUnion(paths)
+        writing = true
         let stamp = Data(ISO8601DateFormatter().string(from: now).utf8)
         // A sleeping drive can take seconds to answer; never block the UI on it.
         DispatchQueue.global(qos: .utility).async {
+            let paths = Self.targets(config, mounted: Self.externalVolumes()).map(\.path)
+            // Remembered before writing, so cleanup finds every file even if
+            // the session ends while a slow drive is still answering.
+            DispatchQueue.main.sync { MainActor.assumeIsolated { _ = DriveKeeper.shared.touched.formUnion(paths) } }
+            defer { DispatchQueue.main.async { MainActor.assumeIsolated { DriveKeeper.shared.writing = false } } }
             for path in paths {
                 let url = URL(fileURLWithPath: path).appendingPathComponent(Self.fileName)
                 try? stamp.write(to: url)
@@ -307,11 +409,65 @@ final class CursorNudger {
         let idle = realIdle(now: now)
         guard active, config.moveCursor, AXIsProcessTrusted() else { return }
         let interval = TimeInterval(max(1, config.moveCursorMinutes)) * 60
+        // The user lets the screen sleep: a nudge is real input to macOS and
+        // would hold that off (and the auto-lock) forever, so stop nudging
+        // once they've been away as long as the display-sleep delay.
+        if config.allowDisplaySleep, let delay = Self.displaySleepDelay(), idle >= delay { return }
         guard Self.shouldNudge(realIdle: idle, sinceLastNudge: now.timeIntervalSince(lastNudge), interval: interval),
             !Self.wouldDisturb()
         else { return }
         lastNudge = now
         Self.nudge()
+    }
+
+    /// The display-sleep delay for the current power source, or nil for
+    /// never. Read from `pmset -g` at most once a minute.
+    private static var displaySleepCache: (at: Date, value: TimeInterval?) = (.distantPast, nil)
+    private static var displaySleepReading = false
+
+    /// The last reading; a fresh one is fetched in the background (never on
+    /// the main thread, which answers ⌥⇥).
+    private static func displaySleepDelay() -> TimeInterval? {
+        if Date().timeIntervalSince(displaySleepCache.at) >= 60, !displaySleepReading {
+            displaySleepReading = true
+            DispatchQueue.global(qos: .utility).async {
+                let value = readDisplaySleep()
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        displaySleepCache = (Date(), value)
+                        displaySleepReading = false
+                    }
+                }
+            }
+        }
+        return displaySleepCache.value
+    }
+
+    nonisolated private static func readDisplaySleep() -> TimeInterval? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        process.arguments = ["-g"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        var value: TimeInterval?
+        if (try? process.run()) != nil {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            value = parseDisplaySleep(String(decoding: data, as: UTF8.self))
+        }
+        return value
+    }
+
+    /// Pure: " displaysleep         10" → 600 s; 0 (never) → nil.
+    nonisolated static func parseDisplaySleep(_ output: String) -> TimeInterval? {
+        for line in output.split(separator: "\n") {
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            if parts.first == "displaysleep", parts.count > 1, let minutes = Int(parts[1]), minutes > 0 {
+                return TimeInterval(minutes) * 60
+            }
+        }
+        return nil
     }
 
     /// A mouse event would wake a sleeping display, dismiss the screen saver

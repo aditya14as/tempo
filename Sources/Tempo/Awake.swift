@@ -188,6 +188,20 @@ final class AwakeEngine: ObservableObject {
     private var screenSaverFiredForIdle = false
     private var observers: [NSObjectProtocol] = []
     private var configObservation: Any?
+    private var lastRefresh = Date.distantPast
+    /// When the trigger in charge stopped holding. Displays, USB and Wi-Fi
+    /// drop out for a moment on wake; wait before letting the Mac sleep.
+    private var triggerLostAt: Date?
+    /// The trigger rules at the last refresh: the grace is for the world
+    /// changing under a rule, not for the user pausing or editing rules.
+    private var lastTriggers: AwakeTriggers?
+    private var didShutDown = false
+    private static let triggerGrace: TimeInterval = 30
+    /// Low battery stopped the triggers; they resume a little above the line.
+    private var batteryBlocked = false
+    /// Keeps App Nap from stretching the 1 s tick while Tempo holds the Mac awake.
+    private var noNap: NSObjectProtocol?
+    private var signalSources: [DispatchSourceSignal] = []
 
     // MARK: Lifecycle
 
@@ -204,9 +218,19 @@ final class AwakeEngine: ObservableObject {
             } else if let app = saved.app, !env.runningBundleIDs.contains(app.bundleID) {
                 store.config.awake.session = nil
             }
-        } else if store.config.awake.startAtLaunch {
+        }
+        if store.config.awake.session == nil, store.config.awake.startAtLaunch {
             store.config.awake.session = AwakeSession(kind: .indefinite)
         }
+        if let resumed = store.config.awake.session {
+            // Already inside the warning window before the relaunch: it was sent then.
+            if let end = resumed.endsAt, end.timeIntervalSinceNow <= TimeInterval(store.config.awake.warnBeforeEndMinutes) * 60 {
+                warnedFor = end
+            }
+            prepareNotifications(for: resumed)
+        }
+        installSignalHandlers()
+        DriveKeeper.shared.watchVolumes()
 
         let ws = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification,
@@ -249,11 +273,22 @@ final class AwakeEngine: ObservableObject {
     /// Starts (or replaces) a manual session.
     func begin(_ kind: AwakeSessionKind) {
         guard let store, store.config.features.awake else { return }
+        refreshEnvironment()
+        // Refuse a session that would end on the spot, quietly: no chime,
+        // no "session ended" notification.
+        if case .until(let end) = kind, end <= Date() {
+            lastEndReason = "That time has already passed"
+            return
+        }
+        if let stop = AwakePlanner.batteryStop(store.config.awake, env: env) {
+            lastEndReason = stop
+            return
+        }
         lastEndReason = nil
         warnedFor = nil
-        store.config.awake.session = AwakeSession(kind: kind, allowDisplaySleep: store.config.awake.allowDisplaySleep)
-        // Ask for notifications the first time a session could send one.
-        if store.config.awake.notifyOnEnd || store.config.awake.warnBeforeEndMinutes > 0 { AwakeNotifier.prepare() }
+        let session = AwakeSession(kind: kind, allowDisplaySleep: store.config.awake.allowDisplaySleep)
+        store.config.awake.session = session
+        prepareNotifications(for: session)
         if store.config.awake.sounds { NSSound(named: "Tink")?.play() }
         refresh()
     }
@@ -264,7 +299,8 @@ final class AwakeEngine: ObservableObject {
 
     /// Adds time to a running timed session (or makes an indefinite one timed from now).
     func extend(minutes: Int) {
-        guard let store, var session = store.config.awake.session else { return }
+        // Only timed sessions: extending "forever" or "while an app runs" would shorten it.
+        guard let store, var session = store.config.awake.session, session.endsAt != nil else { return }
         let base = max(session.endsAt ?? Date(), Date())
         session.kind = .until(base.addingTimeInterval(TimeInterval(minutes) * 60))
         store.config.awake.session = session
@@ -294,7 +330,15 @@ final class AwakeEngine: ObservableObject {
         let awake = store.config.awake
         if awake.sounds { NSSound(named: "Pop")?.play() }
         if let reason, awake.notifyOnEnd {
-            AwakeNotifier.post(title: "Your Mac can sleep again", body: reason)
+            // A trigger may take over the moment the session ends; say so.
+            let takesOver = AwakePlanner.batteryStop(awake, env: env) == nil
+                ? AwakePlanner.triggerReason(awake.triggers, env: env, now: Date(), schedule: store.config.schedule)
+                : nil
+            if let takesOver {
+                AwakeNotifier.post(title: "Keep-awake session ended", body: "\(reason). Still awake: \(takesOver).")
+            } else {
+                AwakeNotifier.post(title: "Your Mac can sleep again", body: reason)
+            }
         }
         refresh()
     }
@@ -309,7 +353,8 @@ final class AwakeEngine: ObservableObject {
                 return
             }
             let warn = TimeInterval(awake.warnBeforeEndMinutes) * 60
-            if warn > 0, endsAt.timeIntervalSince(now) <= warn, warnedFor != endsAt {
+            if warn > 0, endsAt.timeIntervalSince(now) <= warn, warnedFor != endsAt,
+                endsAt.timeIntervalSince(session.startedAt) > warn {
                 warnedFor = endsAt
                 AwakeNotifier.post(
                     title: "Staying awake for \(AwakePlanner.remaining(endsAt.timeIntervalSince(now))) more",
@@ -319,7 +364,7 @@ final class AwakeEngine: ObservableObject {
         }
         // Power and triggers change rarely; the rest of the time a cheap poll
         // every few seconds catches schedule edges and battery drain.
-        if Int(now.timeIntervalSince1970) % 5 == 0 { refresh() }
+        if now.timeIntervalSince(lastRefresh) >= 5 { refresh() }
         let running = state != nil
         CursorNudger.shared.tick(active: running, config: awake, now: now)
         DriveKeeper.shared.tick(active: running, config: awake, now: now)
@@ -328,6 +373,7 @@ final class AwakeEngine: ObservableObject {
 
     /// Re-reads the environment and brings the assertions in line with it.
     func refresh() {
+        lastRefresh = Date()
         guard let store else { return }
         guard store.config.features.awake else {
             // Feature switched off: nothing may keep the Mac up.
@@ -357,9 +403,31 @@ final class AwakeEngine: ObservableObject {
             return
         }
 
-        if AwakePlanner.batteryStop(awake, env: env) == nil,
-            let reason = AwakePlanner.triggerReason(awake.triggers, env: env, now: now, schedule: store.config.schedule) {
+        let rulesChanged = lastTriggers != awake.triggers
+        lastTriggers = awake.triggers
+        if let stop = AwakePlanner.batteryStop(awake, env: env) {
+            batteryBlocked = stop.hasPrefix("Battery below")
+            triggerLostAt = nil
+            apply(nil)
+            return
+        }
+        if batteryBlocked, !awake.endOnLowBattery { batteryBlocked = false }
+        if batteryBlocked {
+            // Resume only a couple of percent above the line, so a reading
+            // hovering at it doesn't flap the Mac between awake and not.
+            if env.hasBattery, !env.onAC, let pct = env.batteryPercent, pct < awake.lowBatteryPercent + 2 {
+                apply(nil)
+                return
+            }
+            batteryBlocked = false
+        }
+        if let reason = AwakePlanner.triggerReason(awake.triggers, env: env, now: now, schedule: store.config.schedule) {
+            triggerLostAt = nil
             apply(AwakeState(source: .trigger(reason), displayOn: !awake.allowDisplaySleep))
+        } else if let current = state, current.isTrigger, awake.triggers.enabled, !rulesChanged {
+            let lost = triggerLostAt ?? now
+            triggerLostAt = lost
+            apply(now.timeIntervalSince(lost) < Self.triggerGrace ? current : nil)
         } else {
             apply(nil)
         }
@@ -391,9 +459,43 @@ final class AwakeEngine: ObservableObject {
             releaseAssertions()
         }
         let awake = store?.config.awake
-        ClosedLid.shared.set(newState != nil && awake?.closedLid == true)
+        // Closed-lid mode is for sessions you start, never for automatic
+        // triggers: a bagged MacBook in work hours must still sleep.
+        ClosedLid.shared.set(newState?.isTrigger == false && awake?.closedLid == true)
+        if newState != nil, noNap == nil {
+            noNap = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep],
+                                                          reason: "Keeping the Mac awake on schedule")
+        } else if newState == nil, let activity = noNap {
+            ProcessInfo.processInfo.endActivity(activity)
+            noNap = nil
+        }
         if newState == nil { DriveKeeper.shared.cleanUp() }
         rebindShortcut(store?.config.features.awake == true ? awake?.toggleShortcut : nil)
+    }
+
+    /// Ask for notifications the first time a session could actually send one.
+    private func prepareNotifications(for session: AwakeSession) {
+        guard let awake = store?.config.awake else { return }
+        if awake.notifyOnEnd || (awake.warnBeforeEndMinutes > 0 && session.endsAt != nil) { AwakeNotifier.prepare() }
+    }
+
+    /// Ctrl-C, a closed Terminal or `kill` skip willTerminate; clean up for them too.
+    private func installSignalHandlers() {
+        for sig in [SIGINT, SIGTERM, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler {
+                // If the main thread is stuck, still go (after a grace for the cleanup).
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3) { exit(1) }
+                MainActor.assumeIsolated {
+                    AwakeEngine.shared.shutDown()
+                    SwitcherController.shared.restoreSystemShortcuts()
+                }
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 
     func releaseAssertions() {
@@ -403,6 +505,8 @@ final class AwakeEngine: ObservableObject {
 
     /// Tempo is quitting: let go of everything, lid switch first.
     func shutDown() {
+        guard !didShutDown else { return }
+        didShutDown = true
         releaseAssertions()
         ClosedLid.shared.shutdown()
         DriveKeeper.shared.cleanUp()

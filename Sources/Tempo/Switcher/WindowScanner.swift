@@ -155,6 +155,9 @@ enum WindowScanner {
         guard let windows = copy(app, kAXWindowsAttribute) as? [AXUIElement] else { return [] }
         var items: [SwitchItem] = []
         for window in windows {
+            // Every later call on this window (title, focus, close…) is capped
+            // too; the default is six seconds of a frozen switcher per hung app.
+            AXUIElementSetMessagingTimeout(window, perAppTimeout)
             let title = clean(copy(window, kAXTitleAttribute) as? String ?? "")
             let subrole = copy(window, kAXSubroleAttribute) as? String
             let frame = self.frame(of: window)
@@ -208,6 +211,12 @@ enum WindowScanner {
             ))
         }
         return items
+    }
+
+    /// Every window the window server still has, on any Space (about 1 ms).
+    static func existingWindowIDs() -> Set<CGWindowID> {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return Set(list.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
     }
 
     // MARK: - Current window

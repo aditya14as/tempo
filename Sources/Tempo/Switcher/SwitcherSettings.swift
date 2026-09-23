@@ -62,6 +62,7 @@ struct SwitcherSettingsSection: View {
             }
         }
         .onAppear { permissions.watch() }
+        .onDisappear { permissions.unwatch() }
     }
 
     @ViewBuilder

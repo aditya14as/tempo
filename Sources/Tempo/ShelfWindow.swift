@@ -78,6 +78,13 @@ final class ShelfWindow {
     func revealForDrag(store: ConfigStore) {
         ensurePanel(store: store)
         guard let panel else { return }
+        // Already open: it's a drop target where it is. Moving it (or tucking
+        // it away when the drag ends elsewhere) would lose the user's card.
+        if open {
+            DropGlow.shared.dragInFlight = true
+            idleTicks = 0
+            return
+        }
         revealedByDrag = true
         open = false
         idleTicks = 0

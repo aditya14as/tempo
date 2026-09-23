@@ -27,7 +27,7 @@ struct MenuBarLabel: View {
 
     private func awakeText(_ state: AwakeState, config: AppConfig) -> String? {
         guard config.awake.showTimeInMenuBar, let end = state.endsAt else { return nil }
-        return AwakePlanner.menuBarRemaining(end.timeIntervalSince(ticker.now))
+        return AwakePlanner.menuBarRemaining(end.timeIntervalSince(Date()))
     }
 
     /// The item as an image, or nil for the plain-text style.
