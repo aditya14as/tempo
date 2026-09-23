@@ -286,7 +286,9 @@ struct SwitcherConfig: Codable, Equatable {
     var showFullscreen = true
     var screen: SwitcherScreen = .mouse
     /// After switching, move the pointer to the focused window.
-    var cursorFollowsFocus = false
+    var cursorFollowsFocus = true
+    /// Hovering a card moves the selection (release then focuses it).
+    var hoverSelects = true
     var showKeyHints = true
     var showSpaceBadges = true
     /// Live window previews (needs Screen Recording access; falls back to icons).
@@ -300,7 +302,7 @@ struct SwitcherConfig: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, modifier, appWindowsKey, style, size, scope, showMinimized, showHidden, showFullscreen
-        case screen, cursorFollowsFocus, showKeyHints, showSpaceBadges, previews, hiddenApps, onboardingDismissed
+        case screen, cursorFollowsFocus, hoverSelects, showKeyHints, showSpaceBadges, previews, hiddenApps, onboardingDismissed
     }
 
     init(from decoder: Decoder) throws {
@@ -317,6 +319,7 @@ struct SwitcherConfig: Codable, Equatable {
         showFullscreen = c.value(.showFullscreen, or: d.showFullscreen)
         screen = c.value(.screen, or: d.screen)
         cursorFollowsFocus = c.value(.cursorFollowsFocus, or: d.cursorFollowsFocus)
+        hoverSelects = c.value(.hoverSelects, or: d.hoverSelects)
         showKeyHints = c.value(.showKeyHints, or: d.showKeyHints)
         showSpaceBadges = c.value(.showSpaceBadges, or: d.showSpaceBadges)
         previews = c.value(.previews, or: d.previews)
