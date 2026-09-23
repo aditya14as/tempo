@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import ServiceManagement
 
@@ -23,12 +24,16 @@ final class ConfigStore: ObservableObject {
             if !config.features.shelf && oldValue.features.shelf {
                 ShelfWindow.shared.hide()
             }
+            if config.appearance != oldValue.appearance {
+                NSApp.appearance = config.appearance.nsAppearance
+            }
         }
     }
 
     init() {
         config = Self.load()
         Self.shared = self
+        NSApp.appearance = config.appearance.nsAppearance
         // The notification's "Mark done" button checks the task off here too.
         ReminderScheduler.shared.activate { [weak self] todoID in
             guard let self, let index = self.config.todos.firstIndex(where: { $0.id == todoID }) else { return }

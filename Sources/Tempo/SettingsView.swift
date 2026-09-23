@@ -149,10 +149,37 @@ struct SettingsView: View {
                         }
                     }
 
+                    if on(.clipboard) {
+                        section("Clipboard") {
+                            ClipboardSettingsSection()
+                        }
+                    }
+
                     if on(.awake) {
                         section("Awake") {
                             AwakeSettingsSection()
                         }
+                    }
+
+                    section("Appearance") {
+                        Picker("", selection: $store.config.appearance) {
+                            ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        HStack(spacing: 8) {
+                            Text("Glass")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Slider(value: $store.config.backgroundOpacity, in: 0...1)
+                                .controlSize(.small)
+                            Text("Solid")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("For Tempo's panel, switcher and clipboard popup. More solid reads better over busy windows.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
 
                     section("General") {
@@ -164,6 +191,9 @@ struct SettingsView: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
+                // Pinned to the panel's width: a wide row inside one section
+                // otherwise pushed every card past the panel's edges.
+                .frame(width: 360 - 32, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum PanelTab: String, CaseIterable, Identifiable {
-    case now, tasks, week, awake
+    case now, tasks, week, awake, clipboard
 
     var id: String { rawValue }
     var label: String {
@@ -10,6 +10,7 @@ enum PanelTab: String, CaseIterable, Identifiable {
         case .tasks: return "Tasks"
         case .week: return "Week"
         case .awake: return "Awake"
+        case .clipboard: return "Clips"
         }
     }
     /// The feature that owns this tab.
@@ -18,6 +19,7 @@ enum PanelTab: String, CaseIterable, Identifiable {
         case .now: return .workHours
         case .tasks, .week: return .tasks
         case .awake: return .awake
+        case .clipboard: return .clipboard
         }
     }
     var icon: String {
@@ -26,7 +28,22 @@ enum PanelTab: String, CaseIterable, Identifiable {
         case .tasks: return "checklist"
         case .week: return "calendar"
         case .awake: return "bolt.fill"
+        case .clipboard: return "doc.on.clipboard"
         }
+    }
+}
+
+/// Lets other parts of Tempo (the clipboard popup's "Settings…") open the
+/// dropdown straight on Settings. The dropdown may not exist yet when asked,
+/// so the request is kept until the panel appears.
+@MainActor
+enum PanelRequest {
+    static var settings = false
+    static let changed = Notification.Name("tempo.panelRequest")
+
+    static func openSettings() {
+        settings = true
+        NotificationCenter.default.post(name: changed, object: nil)
     }
 }
 
@@ -45,6 +62,11 @@ struct PanelView: View {
             }
         }
         .frame(width: 360)
+        // Settings → Appearance → Background: more solid reads better over
+        // busy windows behind the dropdown's glass.
+        .background(Color(nsColor: .windowBackgroundColor).opacity(store.config.backgroundOpacity))
+        .onAppear(perform: takeRequest)
+        .onReceive(NotificationCenter.default.publisher(for: PanelRequest.changed)) { _ in takeRequest() }
         // Hand our window and laid-out size to PanelAligner so it can keep
         // the dropdown fitted to the content and hugging the menu bar icon —
         // the MenuBarExtra window otherwise keeps the first tab's height
@@ -84,6 +106,8 @@ struct PanelView: View {
                     WeekGlance(now: now)
                 case .awake:
                     AwakeTab(now: now)
+                case .clipboard:
+                    ClipboardTab()
                 }
                 footer
             }
@@ -98,6 +122,12 @@ struct PanelView: View {
             // status item was rebuilt (e.g. after a style change).
             StatusItemDropper.install()
         }
+    }
+
+    private func takeRequest() {
+        guard PanelRequest.settings else { return }
+        PanelRequest.settings = false
+        showSettings = true
     }
 
     /// Tabs for the features that are switched on, in their usual order.

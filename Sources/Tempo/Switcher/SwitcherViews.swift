@@ -385,10 +385,27 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.material = .hudWindow
         view.blendingMode = .behindWindow
         view.state = .active
+        let tint = TintView()
+        tint.autoresizingMask = [.width, .height]
+        tint.frame = view.bounds
+        view.addSubview(tint)
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        for case let tint as TintView in nsView.subviews { tint.needsDisplay = true }
+    }
+
+    /// Settings → Appearance → Background: a layer of the window colour over
+    /// the glass, so text stays readable over busy windows behind.
+    private final class TintView: NSView {
+        override func draw(_ dirtyRect: NSRect) {
+            let opacity = MainActor.assumeIsolated { ConfigStore.shared?.config.backgroundOpacity ?? 0 }
+            NSColor.windowBackgroundColor.withAlphaComponent(opacity).setFill()
+            dirtyRect.fill()
+        }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
 }
 
 /// The switcher's window: borderless, never activates Tempo, floats above

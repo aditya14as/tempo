@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import SwiftUI
 
 enum ProgressMode: String, Codable, CaseIterable, Identifiable {
@@ -202,6 +202,27 @@ enum MenuBarStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Light or dark for Tempo's own windows, or follow the Mac.
+enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 enum Theme: String, Codable, CaseIterable, Identifiable {
     case aurora, sunset, ocean, mono
 
@@ -334,6 +355,11 @@ struct AppConfig: Codable, Equatable {
     var menuBarStyle: MenuBarStyle = .text
     var menuBarShows: MenuBarShows = .todayWeek
     var theme: Theme = .aurora
+    /// Light, dark, or the Mac's setting, for every Tempo window.
+    var appearance: AppearanceMode = .system
+    /// How solid Tempo's windows are, from see-through glass (0) to an
+    /// opaque background (1): more solid reads better over busy windows.
+    var backgroundOpacity: Double = 0.35
     var launchAtLogin: Bool = false
     /// Up to 5 focus tasks shown in the panel.
     var todos: [TodoItem] = []
@@ -343,6 +369,9 @@ struct AppConfig: Codable, Equatable {
     var awake = AwakeConfig()
     /// The ⌥⇥ window switcher (the AltTab side of Tempo).
     var switcher = SwitcherConfig()
+    /// Clipboard history settings (the Maccy side of Tempo). The history
+    /// itself is kept on disk by `ClipboardHistory`, not in this config.
+    var clipboard = ClipboardConfig()
     /// Which parts of Tempo are switched on (Settings → Features).
     var features = FeatureSet()
 
@@ -367,11 +396,14 @@ struct AppConfig: Codable, Equatable {
         menuBarStyle = (try? c.decodeIfPresent(MenuBarStyle.self, forKey: .menuBarStyle)) ?? d.menuBarStyle
         menuBarShows = (try? c.decodeIfPresent(MenuBarShows.self, forKey: .menuBarShows)) ?? d.menuBarShows
         theme = (try? c.decodeIfPresent(Theme.self, forKey: .theme)) ?? d.theme
+        appearance = c.value(.appearance, or: d.appearance)
+        backgroundOpacity = min(max(c.value(.backgroundOpacity, or: d.backgroundOpacity), 0), 1)
         launchAtLogin = (try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)) ?? d.launchAtLogin
         todos = (try? c.decodeIfPresent([TodoItem].self, forKey: .todos)) ?? d.todos
         shelf = (try? c.decodeIfPresent([ShelfItem].self, forKey: .shelf)) ?? d.shelf
         awake = c.value(.awake, or: d.awake)
         switcher = c.value(.switcher, or: d.switcher)
+        clipboard = c.value(.clipboard, or: d.clipboard)
         features = c.value(.features, or: d.features)
     }
 
@@ -382,6 +414,7 @@ struct AppConfig: Codable, Equatable {
         case .awake: return features.awake
         case .switcher: return switcher.enabled
         case .shelf: return features.shelf
+        case .clipboard: return clipboard.enabled
         }
     }
 
@@ -392,6 +425,7 @@ struct AppConfig: Codable, Equatable {
         case .awake: features.awake = on
         case .switcher: switcher.enabled = on
         case .shelf: features.shelf = on
+        case .clipboard: clipboard.enabled = on
         }
     }
 

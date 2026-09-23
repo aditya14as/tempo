@@ -5,16 +5,17 @@
 <p align="center">
   A tiny native macOS menu bar app that shows how far you are through your
   work day, week, month, and year — in a glassy, customizable drop-down panel.
-  It also keeps your Mac awake (like Amphetamine) and switches windows with
-  ⌥⇥ (like AltTab), so one app replaces three.
+  It also keeps your Mac awake (like Amphetamine), switches windows with
+  ⌥⇥ (like AltTab), and remembers everything you copy (like Maccy), so one
+  app replaces four.
 </p>
 
 ---
 
 Tempo sits in your menu bar as a live figure like `T 87% · W 37%`: how far
 you are through **T**oday and the **W**eek. Click it for the full panel, with
-**Now / Tasks / Week** tabs, a five-item task list, and a floating **Shelf**
-for parking files and links between apps.
+**Now / Tasks / Week** tabs, a five-item task list, a floating **Shelf**
+for parking files and links between apps, and a searchable clipboard history.
 
 Default schedule: **Mon–Fri, 10:00–18:00**. The day runs 0% at 10:00 to 100%
 at 18:00; the week runs Monday 10:00 to Friday 18:00, counting work hours only.
@@ -192,13 +193,44 @@ Tempo for ⌥⇥ or the power settings. Settings → **Switcher** changes the ho
 key (⌥, ⌃, or ⌘), the style (previews, icons, or a list), the card size, which
 Spaces and screens it uses, and apps to never show.
 
+### Clipboard history
+
+Tempo remembers what you copy: text, links, rich text, images and files. Press
+**⇧⌘C** anywhere to open the history at the pointer, type to filter it, and
+press **↩** to paste the pick into the app you were in. The **Clips** tab in
+the panel lists the latest ones too.
+
+While the popup is open:
+
+| Key | Does |
+|---|---|
+| type | filter (exact, fuzzy, or regex; set in Settings) |
+| ↑ ↓ | move the selection |
+| ↩ or click | paste (or only copy, if you turn pasting off) |
+| ⌥↩ or ⌥-click | the other one: copy instead of paste, or the reverse |
+| ⇧ with any of those | flip "paste as plain text" |
+| ⌘1 – ⌘9 | pick one of the first nine entries |
+| ⌥P | pin or unpin (pinned entries stay on top and get a ⌘-letter) |
+| ⌥⌫ / ⌥⌘⌫ | delete the entry / clear everything that isn't pinned |
+| ⎋ | clear the search, then close |
+
+Pasting needs **Accessibility**, the same switch the window switcher uses.
+Without it, picking an entry just copies it and you press ⌘V yourself.
+Copies from password managers (1Password, Bitwarden, Keychain Access,
+Passwords) and anything an app marks as concealed or temporary are never
+recorded. Settings → **Clipboard** changes the shortcut, how many entries to
+keep, which kinds to save, and which apps or text patterns to skip, and can
+pause recording. The history is kept only on your Mac, in
+`~/Library/Application Support/Tempo/Clipboard`.
+
 ## Customize
 
 Open settings with the **gear** icon in the panel.
 
 - **Features** — switch each part of Tempo on or off: **Work hours** (progress
   and the menu bar percentages), **Tasks** (the Tasks and Week tabs and their
-  reminders), **Keep awake**, **Window switcher**, and **Shelf**. Turning one
+  reminders), **Keep awake**, **Window switcher**, **Shelf**, and
+  **Clipboard history**. Turning one
   off hides its tab, settings, and menu bar pieces and stops it running. With
   work hours off, the menu bar shows a plain icon (or just the bolt while
   awake).
@@ -240,8 +272,8 @@ swift run Tempo                 # run the app directly (no bundle)
 
 Self-checks live in `Sources/Tempo/Checks.swift`. The Command Line Tools ship no
 XCTest, so tests are a `--check` flag on the binary; it covers the progress math,
-the Shelf's drop-card placement, keep-awake planning, and the switcher's
-ordering, navigation, and layout. `build.sh` signs with a "Tempo Local Signing"
+the Shelf's drop-card placement, keep-awake planning, the switcher's
+ordering, navigation, and layout, and clipboard search, sorting, and dedupe. `build.sh` signs with a "Tempo Local Signing"
 certificate from your login keychain when one exists (override with
 `TEMPO_SIGN_IDENTITY`), so Accessibility and Screen Recording survive rebuilds.
 Without it the build is signed ad-hoc: after a hand rebuild run

@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ShelfWindow.shared.prewarm(store: store)
         AwakeEngine.shared.start(store: store)
         SwitcherController.shared.start(store: store)
+        ClipboardController.shared.start(store: store)
     }
 }
 

@@ -53,13 +53,17 @@ struct KeyCombo: Codable, Equatable, Hashable {
     var flags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiers) }
 
     /// "⌃⌥A" — what the settings row shows.
-    var label: String {
-        var text = ""
-        if flags.contains(.control) { text += "⌃" }
-        if flags.contains(.option) { text += "⌥" }
-        if flags.contains(.shift) { text += "⇧" }
-        if flags.contains(.command) { text += "⌘" }
-        return text + Self.keyName(keyCode)
+    var label: String { keys.joined() }
+
+    /// Each key on its own ("⇧", "⌘", "C"), in the usual macOS order, for
+    /// drawing as separate keycaps.
+    var keys: [String] {
+        var keys: [String] = []
+        if flags.contains(.control) { keys.append("⌃") }
+        if flags.contains(.option) { keys.append("⌥") }
+        if flags.contains(.shift) { keys.append("⇧") }
+        if flags.contains(.command) { keys.append("⌘") }
+        return keys + [Self.keyName(keyCode)]
     }
 
     /// A shortcut without any modifier would fire while typing; refuse it.
@@ -103,7 +107,7 @@ struct USBDeviceRef: Codable, Equatable, Hashable, Identifiable {
 
 /// The parts of Tempo you can switch on and off from Settings → Features.
 enum Feature: String, CaseIterable, Identifiable {
-    case workHours, tasks, awake, switcher, shelf
+    case workHours, tasks, awake, switcher, shelf, clipboard
 
     var id: String { rawValue }
     var title: String {
@@ -113,6 +117,7 @@ enum Feature: String, CaseIterable, Identifiable {
         case .awake: return "Keep awake"
         case .switcher: return "Window switcher"
         case .shelf: return "Shelf"
+        case .clipboard: return "Clipboard history"
         }
     }
     var blurb: String {
@@ -122,6 +127,7 @@ enum Feature: String, CaseIterable, Identifiable {
         case .awake: return "Keep your Mac from sleeping, like Amphetamine"
         case .switcher: return "Hold ⌥ and press ⇥ to switch windows, like AltTab"
         case .shelf: return "A floating drop zone for files you drag around"
+        case .clipboard: return "Everything you copy, searchable with ⇧⌘C, like Maccy"
         }
     }
     var icon: String {
@@ -131,11 +137,13 @@ enum Feature: String, CaseIterable, Identifiable {
         case .awake: return "bolt.fill"
         case .switcher: return "rectangle.stack.fill"
         case .shelf: return "tray.full.fill"
+        case .clipboard: return "doc.on.clipboard.fill"
         }
     }
 }
 
-/// Which features are on. The switcher's switch lives in `SwitcherConfig.enabled`.
+/// Which features are on. The switcher's and clipboard's switches live in
+/// `SwitcherConfig.enabled` and `ClipboardConfig.enabled`.
 struct FeatureSet: Codable, Equatable {
     var workHours = true
     var tasks = true

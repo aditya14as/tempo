@@ -63,6 +63,7 @@ final class PanelAligner {
         return window.isVisible
             && !window.className.contains("StatusBarWindow")
             && !ShelfWindow.shared.isShelf(window)
+            && !(window is ClipboardPanel)
             && window.frame.height > 100
             && window.frame.maxY > top - 40
     }

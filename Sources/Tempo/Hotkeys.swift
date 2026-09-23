@@ -92,9 +92,7 @@ struct ShortcutRecorder: View {
             Button {
                 recording ? stop() : start()
             } label: {
-                Text(recording ? "Press keys…" : (combo?.label ?? "Record shortcut"))
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .monospaced()
+                label
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .frame(minWidth: 110)
@@ -129,6 +127,27 @@ struct ShortcutRecorder: View {
             }
         }
         .onDisappear { stop() }
+    }
+
+    /// The combo as separate keycaps: the symbols ran into each other when
+    /// drawn as one string in a small monospaced font.
+    @ViewBuilder
+    private var label: some View {
+        if let combo, !recording {
+            HStack(spacing: 3) {
+                ForEach(Array(combo.keys.enumerated()), id: \.offset) { _, key in
+                    Text(key)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .frame(minWidth: 18, minHeight: 18)
+                        .padding(.horizontal, key.count > 1 ? 4 : 0)
+                        .background(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.primary.opacity(0.08)))
+                }
+            }
+        } else {
+            Text(recording ? "Press keys…" : "Record shortcut")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+        }
     }
 
     private func start() {

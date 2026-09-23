@@ -527,6 +527,7 @@ enum Checks {
 
         AwakeChecks.run()
         SwitcherChecks.run()
+        ClipboardChecks.run()
 
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1

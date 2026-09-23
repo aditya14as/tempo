@@ -447,6 +447,7 @@ struct PermissionNeeds {
     init(_ config: AppConfig) {
         if config.isOn(.switcher) { accessibilityFor.append("the \(config.switcher.modifier.symbol)⇥ switcher") }
         if config.isOn(.awake) && config.awake.moveCursor { accessibilityFor.append("the pointer nudge") }
+        if config.isOn(.clipboard) && config.clipboard.pasteOnSelect { accessibilityFor.append("pasting from clipboard history") }
         previews = config.isOn(.switcher) && config.switcher.previews && config.switcher.style == .thumbnails
         guard PermissionCenter.shared.notificationsAvailable else { return }
         if config.isOn(.tasks) && !DueFormat.pendingReminders(config.todos, now: Date()).isEmpty {
