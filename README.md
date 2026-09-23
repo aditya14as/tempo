@@ -14,8 +14,9 @@
 
 Tempo sits in your menu bar as a live figure like `T 87% · W 37%`: how far
 you are through **T**oday and the **W**eek. Click it for the full panel, with
-**Now / Tasks / Week** tabs, a five-item task list, a floating **Shelf**
-for parking files and links between apps, and a searchable clipboard history.
+**Now / Tasks / Week / Awake / Clips** tabs, a five-item task list, a
+floating **Shelf** for parking files and links between apps, and a searchable
+clipboard history.
 
 Default schedule: **Mon–Fri, 10:00–18:00**. The day runs 0% at 10:00 to 100%
 at 18:00; the week runs Monday 10:00 to Friday 18:00, counting work hours only.
@@ -57,7 +58,7 @@ starts with your Mac.
 
 ### The panel
 
-Four tabs across the top:
+Five tabs across the top:
 
 - **Now** — today, this week, this month, and this year, each shown as a
   percentage, bar, ring, or dot grid.
@@ -65,6 +66,10 @@ Four tabs across the top:
 - **Week** — this week and next at a glance, with each task dotted on its due
   day and an agenda list underneath.
 - **Awake** — keep your Mac from sleeping. See below.
+- **Clips** — the latest things you copied: click one to copy it again, search
+  them, pin or delete from the right-click menu, pause recording or skip the
+  next copy, and open the full history popup. See
+  [Clipboard history](#clipboard-history).
 
 A tab only shows while its feature is on (see **Features** below). The **gear**
 opens settings; the **power button** quits Tempo.
@@ -195,10 +200,27 @@ Spaces and screens it uses, and apps to never show.
 
 ### Clipboard history
 
-Tempo remembers what you copy: text, links, rich text, images and files. Press
-**⇧⌘C** anywhere to open the history at the pointer, type to filter it, and
-press **↩** to paste the pick into the app you were in. The **Clips** tab in
-the panel lists the latest ones too.
+Tempo remembers what you copy: text, links, colours, rich text, images and
+files. Press **⇧⌘C** anywhere (change it in Settings) to open the history at
+the pointer, type to filter it, and press **↩** to paste the pick into the
+app you were in. It opens over full-screen apps too. The **Clips** tab in the
+panel lists the latest ones.
+
+The popup works like Maccy's:
+
+- **The list** on the left: text entries as one line, images as real
+  thumbnails, each with the app it came from and its shortcut (⌘1–⌘9, or
+  ⌘+letter when pinned). Pinned entries sit on top, above a thin divider.
+- **The preview** on the right: the full text, the image, the files, or a
+  colour swatch, then details — app, dimensions or length, size, first and
+  last copy time, how many times you copied it, and its pin. The button at
+  the end of the search bar hides or shows it.
+- **Buttons** over the preview: copy the text in an image, pin or unpin, and
+  delete.
+- **The footer**: Clear all, Pause recording, and Settings.
+
+**Text in images is read automatically**, so searching finds screenshots by
+the words in them, and the preview offers **Copy text**.
 
 While the popup is open:
 
@@ -212,6 +234,8 @@ While the popup is open:
 | ⌘1 – ⌘9 | pick one of the first nine entries |
 | ⌥P | pin or unpin (pinned entries stay on top and get a ⌘-letter) |
 | ⌥⌫ / ⌥⌘⌫ | delete the entry / clear everything that isn't pinned |
+| ⌥T | copy the text in an image |
+| ⌘, | open Tempo's settings |
 | ⎋ | clear the search, then close |
 
 Pasting needs **Accessibility**, the same switch the window switcher uses.
@@ -220,9 +244,15 @@ Copies from password managers (1Password, Bitwarden, Keychain Access,
 Passwords) and anything an app marks as concealed or temporary are never
 recorded. Tempo keeps the latest **150** entries (pinned ones don't count and
 never fall off). Settings → **Clipboard** changes the shortcut, how many entries
-to keep (10–2000), which kinds to save, and which apps or text patterns to skip, and can
-pause recording. The history is kept only on your Mac, in
+to keep (10–2000), search mode, order, where the popup opens, which kinds to
+save, and which apps or text patterns to skip, and can pause recording. The
+history is kept only on your Mac, readable only by you, in
 `~/Library/Application Support/Tempo/Clipboard`.
+
+**Coming from Maccy?** Settings → Clipboard → **Import from Maccy** brings
+your existing history over, pins included (macOS asks once to let Tempo read
+Maccy's data). Then quit Maccy (there's a button for that too), since it
+also listens for ⇧⌘C.
 
 ## Customize
 
@@ -259,7 +289,10 @@ Open settings with the **gear** icon in the panel.
 - **Menu bar item** — live percentage text, a plain icon, or a tiny filling
   ring, and which metric it tracks.
 - **Accent theme** — Aurora, Sunset, Ocean, or Mono.
-- **Switcher** and **Awake** — see the sections above.
+- **Appearance** — System, Light, or Dark for all of Tempo's windows, and a
+  **Glass ↔ Solid** slider: more solid reads better over busy windows behind
+  the panel, the switcher, and the clipboard popup.
+- **Switcher**, **Awake**, and **Clipboard** — see the sections above.
 
 Everything saves automatically and survives restarts.
 
