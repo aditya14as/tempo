@@ -13,6 +13,10 @@ struct AwakeEnvironment: Equatable {
     var batteryPercent: Int? = nil
     var externalDisplay = false
     var runningBundleIDs: Set<String> = []
+    /// The Wi-Fi network's name, when Tempo may see it.
+    var wifiSSID: String? = nil
+    /// "vendor:product" IDs of plugged-in USB devices.
+    var usbDeviceIDs: Set<String> = []
 }
 
 enum AwakePlanner {
@@ -49,6 +53,10 @@ enum AwakePlanner {
         if let app = triggers.apps.first(where: { env.runningBundleIDs.contains($0.bundleID) }) {
             return "\(app.name) is open"
         }
+        if let device = triggers.usbDevices.first(where: { env.usbDeviceIDs.contains($0.id) }) {
+            return "\(device.name) connected"
+        }
+        if let ssid = env.wifiSSID, triggers.wifiNetworks.contains(ssid) { return "On \(ssid) Wi-Fi" }
         if triggers.externalDisplay && env.externalDisplay { return "External display connected" }
         if triggers.onPower && env.hasBattery && env.onAC { return "Plugged in" }
         if triggers.workHours && inWorkHours(now, schedule: schedule, cal: cal) { return "Work hours" }
@@ -65,20 +73,48 @@ enum AwakePlanner {
         return nil
     }
 
-    /// "2h 05m", "42m", "35s".
+    /// "2h 05m", "42m", "35s", "2d 3h".
     static func remaining(_ seconds: TimeInterval) -> String {
         let s = max(0, Int(seconds.rounded(.up)))
         if s < 60 { return "\(s)s" }
         let minutes = (s + 59) / 60
         if minutes < 60 { return "\(minutes)m" }
+        if minutes >= 24 * 60 { return "\(minutes / 1440)d \(minutes % 1440 / 60)h" }
         return String(format: "%dh %02dm", minutes / 60, minutes % 60)
     }
 
-    /// Compact menu bar form: "42m", "2h05".
+    /// Compact menu bar form: "42m", "2h05", "2d3h".
     static func menuBarRemaining(_ seconds: TimeInterval) -> String {
         let minutes = max(0, (Int(seconds.rounded(.up)) + 59) / 60)
         if minutes < 60 { return "\(minutes)m" }
+        if minutes >= 24 * 60 { return "\(minutes / 1440)d\(minutes % 1440 / 60)h" }
         return String(format: "%dh%02d", minutes / 60, minutes % 60)
+    }
+
+    /// When a session ends, as briefly as is unambiguous:
+    /// "18:00", "tomorrow 09:00", "Fri 25 Sep 09:00".
+    static func untilLabel(_ end: Date, now: Date, cal: Calendar = .current, locale: Locale = .current) -> String {
+        let time = clock(end, cal: cal, locale: locale)
+        if cal.isDate(end, inSameDayAs: now) { return time }
+        if let tomorrow = cal.date(byAdding: .day, value: 1, to: now), cal.isDate(end, inSameDayAs: tomorrow) {
+            return "tomorrow \(time)"
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = cal
+        formatter.timeZone = cal.timeZone
+        formatter.locale = locale
+        formatter.setLocalizedDateFormatFromTemplate("EEEdMMM")
+        return "\(formatter.string(from: end)) \(time)"
+    }
+
+    /// Merges a picked day and a picked time of day into one moment.
+    static func combine(day: Date, time: Date, cal: Calendar = .current) -> Date {
+        var c = cal.dateComponents([.year, .month, .day], from: day)
+        let t = cal.dateComponents([.hour, .minute], from: time)
+        c.hour = t.hour
+        c.minute = t.minute
+        c.second = 0
+        return cal.date(from: c) ?? day
     }
 
     /// "30m", "1h", "1h 30m" for preset chips.
@@ -87,9 +123,14 @@ enum AwakePlanner {
         return minutes % 60 == 0 ? "\(minutes / 60)h" : "\(minutes / 60)h \(minutes % 60)m"
     }
 
-    static func clock(_ date: Date, cal: Calendar = .current) -> String {
-        let c = cal.dateComponents([.hour, .minute], from: date)
-        return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+    /// A time of day in the user's 12- or 24-hour style: "18:00" / "6:00 PM".
+    static func clock(_ date: Date, cal: Calendar = .current, locale: Locale = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = cal
+        formatter.timeZone = cal.timeZone
+        formatter.locale = locale
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
+        return formatter.string(from: date)
     }
 
     /// The next occurrence of a wall-clock time: today if still ahead, else tomorrow.
@@ -154,6 +195,7 @@ final class AwakeEngine: ObservableObject {
         guard self.store == nil else { return }
         self.store = store
         AwakeNotifier.prepare()
+        ClosedLid.shared.recoverAtLaunch()
         refreshEnvironment()
 
         // A session saved before quitting resumes — unless it has already run out.
@@ -179,7 +221,7 @@ final class AwakeEngine: ObservableObject {
         ) { _ in MainActor.assumeIsolated { AwakeEngine.shared.refresh() } })
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-        ) { _ in MainActor.assumeIsolated { AwakeEngine.shared.releaseAssertions() } })
+        ) { _ in MainActor.assumeIsolated { AwakeEngine.shared.shutDown() } })
 
         if let source = IOPSNotificationCreateRunLoopSource({ _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { AwakeEngine.shared.refresh() } }
@@ -189,8 +231,8 @@ final class AwakeEngine: ObservableObject {
         }
 
         configObservation = store.$config
-            .map(\.awake)
-            .removeDuplicates()
+            .map { ($0.features.awake, $0.awake) }
+            .removeDuplicates(by: ==)
             .sink { _ in
                 DispatchQueue.main.async { MainActor.assumeIsolated { AwakeEngine.shared.refresh() } }
             }
@@ -207,7 +249,7 @@ final class AwakeEngine: ObservableObject {
 
     /// Starts (or replaces) a manual session.
     func begin(_ kind: AwakeSessionKind) {
-        guard let store else { return }
+        guard let store, store.config.features.awake else { return }
         lastEndReason = nil
         warnedFor = nil
         store.config.awake.session = AwakeSession(kind: kind, allowDisplaySleep: store.config.awake.allowDisplaySleep)
@@ -277,12 +319,21 @@ final class AwakeEngine: ObservableObject {
         // Power and triggers change rarely; the rest of the time a cheap poll
         // every few seconds catches schedule edges and battery drain.
         if Int(now.timeIntervalSince1970) % 5 == 0 { refresh() }
+        let running = state != nil
+        CursorNudger.shared.tick(active: running, config: awake, now: now)
+        DriveKeeper.shared.tick(active: running, config: awake, now: now)
         maybeStartScreenSaver(awake: awake)
     }
 
     /// Re-reads the environment and brings the assertions in line with it.
     func refresh() {
         guard let store else { return }
+        guard store.config.features.awake else {
+            // Feature switched off: nothing may keep the Mac up.
+            if store.config.awake.session != nil { store.config.awake.session = nil }
+            apply(nil)
+            return
+        }
         refreshEnvironment()
         let awake = store.config.awake
         let now = Date()
@@ -311,7 +362,6 @@ final class AwakeEngine: ObservableObject {
         } else {
             apply(nil)
         }
-        rebindShortcut(awake.toggleShortcut)
     }
 
     private func rebindShortcut(_ combo: KeyCombo?) {
@@ -339,12 +389,22 @@ final class AwakeEngine: ObservableObject {
         } else {
             releaseAssertions()
         }
-        rebindShortcut(store?.config.awake.toggleShortcut)
+        let awake = store?.config.awake
+        ClosedLid.shared.set(newState != nil && awake?.closedLid == true)
+        if newState == nil { DriveKeeper.shared.cleanUp() }
+        rebindShortcut(store?.config.features.awake == true ? awake?.toggleShortcut : nil)
     }
 
     func releaseAssertions() {
         Self.release(&displayAssertion)
         Self.release(&systemAssertion)
+    }
+
+    /// Tempo is quitting: let go of everything, lid switch first.
+    func shutDown() {
+        releaseAssertions()
+        ClosedLid.shared.shutdown()
+        DriveKeeper.shared.cleanUp()
     }
 
     /// The display assertion also holds off the screen saver. When the user
@@ -355,7 +415,8 @@ final class AwakeEngine: ObservableObject {
             screenSaverFiredForIdle = false
             return
         }
-        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        // Real idle time: the cursor nudge's own events don't count as activity.
+        let idle = CursorNudger.shared.realIdle()
         let delay = TimeInterval(max(1, awake.screenSaverMinutes)) * 60
         if idle < delay {
             screenSaverFiredForIdle = false
@@ -378,6 +439,9 @@ final class AwakeEngine: ObservableObject {
             return CGDisplayIsBuiltin(id) == 0
         }
         next.runningBundleIDs = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let triggers = store?.config.awake.triggers ?? AwakeTriggers()
+        if !triggers.wifiNetworks.isEmpty { next.wifiSSID = WiFiWatcher.shared.currentSSID() }
+        if !triggers.usbDevices.isEmpty { next.usbDeviceIDs = Set(USBDevices.connected().map(\.id)) }
         if next != env { env = next }
     }
 

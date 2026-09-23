@@ -127,7 +127,7 @@ struct AwakeTab: View {
         let display = state.displayOn ? "screen stays on" : "screen may sleep"
         switch state.source {
         case .manual(let session):
-            if let end = session.endsAt { return "Until \(AwakePlanner.clock(end)) · \(display)" }
+            if let end = session.endsAt { return "Until \(AwakePlanner.untilLabel(end, now: now)) · \(display)" }
             return display.prefix(1).uppercased() + display.dropFirst()
         case .trigger(let reason):
             return "\(reason) · \(display)"
@@ -185,30 +185,37 @@ struct AwakeTab: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
                 .kerning(1)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 66), spacing: 6)], spacing: 6) {
+            HStack(spacing: 6) {
                 ForEach(awake.presets, id: \.self) { minutes in
                     chip(AwakePlanner.durationLabel(minutes), icon: nil, selected: false) {
                         engine.begin(minutes: minutes)
                     }
                 }
+            }
+            // Wider chips on their own row, so "Until 18:00" never truncates.
+            HStack(spacing: 6) {
                 if let workEnd {
                     chip("Until \(AwakePlanner.clock(workEnd))", icon: "briefcase.fill",
                          selected: current?.endsAt == workEnd) {
                         engine.begin(.until(workEnd))
                     }
+                    // Its natural width; Forever and Custom share what's left.
+                    .fixedSize(horizontal: true, vertical: false)
                     .help("Until today's work ends")
                 }
                 chip("Forever", icon: "infinity", selected: current?.kind == .indefinite) {
                     engine.begin(.indefinite)
                 }
-                chip("Custom", icon: "clock", selected: false) { showCustom = true }
-                    .popover(isPresented: $showCustom, arrowEdge: .bottom) {
-                        CustomAwakePopover(theme: theme) { kind in
-                            engine.begin(kind)
-                            showCustom = false
-                        }
+                chip("Custom", icon: "slider.horizontal.below.rectangle", selected: false) {
+                    showCustom = true
+                }
+                .help("A length, a date and time, or while an app is open")
+                .popover(isPresented: $showCustom, arrowEdge: .bottom) {
+                    CustomAwakePopover(theme: theme) { kind in
+                        engine.begin(kind)
+                        showCustom = false
                     }
-                appMenu
+                }
             }
         }
         .padding(12)
@@ -221,10 +228,13 @@ struct AwakeTab: View {
     private func chipLabel(_ label: String, icon: String?, selected: Bool) -> some View {
         HStack(spacing: 4) {
             if let icon { Image(systemName: icon).font(.system(size: 9, weight: .bold)) }
-            Text(label).lineLimit(1)
+            Text(label)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .font(.system(.caption, design: .rounded).weight(.semibold))
         .padding(.vertical, 6)
+        .padding(.horizontal, 6)
         .frame(maxWidth: .infinity)
         .background(
             Capsule().fill(selected ? AnyShapeStyle(theme.gradient) : AnyShapeStyle(Color.primary.opacity(0.07)))
@@ -236,27 +246,6 @@ struct AwakeTab: View {
     private func chip(_ label: String, icon: String?, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { chipLabel(label, icon: icon, selected: selected) }
             .buttonStyle(.plain)
-    }
-
-    /// "While an app is open": pick from the apps running right now.
-    private var appMenu: some View {
-        Menu {
-            let apps = RunningApps.regular()
-            if apps.isEmpty { Text("No apps running") }
-            ForEach(apps) { app in
-                Button {
-                    engine.begin(.whileApp(app))
-                } label: {
-                    Label { Text(app.name) } icon: { Image(nsImage: RunningApps.menuIcon(app)) }
-                }
-            }
-        } label: {
-            chipLabel("While app", icon: "app.badge", selected: engine.state?.session?.app != nil)
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .help("Stay awake while an app is open")
     }
 
     // MARK: Expanders
@@ -302,40 +291,139 @@ struct AwakeTab: View {
     }
 
     private var optionsSummary: String {
-        var parts = [awake.allowDisplaySleep ? "Screen may sleep" : "Screen on"]
-        if engine.env.hasBattery && awake.endOnLowBattery { parts.append("stop at \(awake.lowBatteryPercent)%") }
-        return parts.joined(separator: " · ")
+        let screen = awake.allowDisplaySleep ? "Screen may sleep" : "Screen on"
+        var extras: [String] = []
+        if awake.closedLid && ClosedLid.hasLid { extras.append("lid closed") }
+        if awake.moveCursor { extras.append("nudge") }
+        if awake.driveAlive { extras.append("drives") }
+        if extras.isEmpty {
+            return engine.env.hasBattery && awake.endOnLowBattery ? "\(screen) · stop at \(awake.lowBatteryPercent)%" : screen
+        }
+        return "\(screen) · \(extras[0])" + (extras.count > 1 ? " +\(extras.count - 1)" : "")
     }
 
     private var optionsBody: some View {
         VStack(alignment: .leading, spacing: 8) {
-            toggle("Keep the screen on", isOn: Binding(
-                get: { !store.config.awake.allowDisplaySleep },
-                set: { store.config.awake.allowDisplaySleep = !$0 }
-            ))
-            toggle("Allow screen saver", isOn: $store.config.awake.allowScreenSaver)
-                .disabled(awake.allowDisplaySleep)
-            if awake.allowScreenSaver && !awake.allowDisplaySleep {
-                subRow("Starts after") {
-                    minutesStepper($store.config.awake.screenSaverMinutes, range: 1...120, suffix: "idle")
-                }
-            }
-            if engine.env.hasBattery {
-                toggle("Stop on low battery", isOn: $store.config.awake.endOnLowBattery)
-                if awake.endOnLowBattery {
-                    subRow("Below") {
-                        Stepper(value: $store.config.awake.lowBatteryPercent, in: 5...95, step: 5) {
-                            Text("\(awake.lowBatteryPercent)%")
-                                .font(.system(.caption, design: .rounded).weight(.semibold))
-                                .monospacedDigit()
-                        }
-                        .controlSize(.mini)
+            group("Screen") {
+                toggle("Keep the screen on", isOn: Binding(
+                    get: { !store.config.awake.allowDisplaySleep },
+                    set: { store.config.awake.allowDisplaySleep = !$0 }
+                ))
+                toggle("Allow screen saver", isOn: $store.config.awake.allowScreenSaver)
+                    .disabled(awake.allowDisplaySleep)
+                if awake.allowScreenSaver && !awake.allowDisplaySleep {
+                    subRow("Starts after") {
+                        minutesStepper($store.config.awake.screenSaverMinutes, range: 1...120, suffix: "idle")
                     }
                 }
-                toggle("Stop when unplugged", isOn: $store.config.awake.endWhenUnplugged)
             }
-            toggle("Notify when a session ends", isOn: $store.config.awake.notifyOnEnd)
+            group("Stay active") {
+                toggle("Move the pointer when idle", isOn: $store.config.awake.moveCursor)
+                if awake.moveCursor {
+                    subRow("After") {
+                        minutesStepper($store.config.awake.moveCursorMinutes, range: 1...60, suffix: "idle")
+                    }
+                    if !SwitcherController.shared.accessibilityGranted {
+                        hint("Needs Accessibility to move the pointer.", action: "Allow") {
+                            Permissions.requestAccessibility()
+                            Permissions.openAccessibilitySettings()
+                        }
+                    } else {
+                        note("A one-pixel nudge keeps Slack, Teams and Zoom from marking you away.")
+                    }
+                }
+                if ClosedLid.hasLid {
+                    toggle("Stay awake with the lid closed", isOn: $store.config.awake.closedLid)
+                    if awake.closedLid { closedLidDetail }
+                }
+                toggle("Keep external drives spinning", isOn: $store.config.awake.driveAlive)
+                if awake.driveAlive { drivesDetail }
+            }
+            group("Safety") {
+                if engine.env.hasBattery {
+                    toggle("Stop on low battery", isOn: $store.config.awake.endOnLowBattery)
+                    if awake.endOnLowBattery {
+                        subRow("Below") {
+                            Stepper(value: $store.config.awake.lowBatteryPercent, in: 5...95, step: 5) {
+                                Text("\(awake.lowBatteryPercent)%")
+                                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                                    .monospacedDigit()
+                            }
+                            .controlSize(.mini)
+                        }
+                    }
+                    toggle("Stop when unplugged", isOn: $store.config.awake.endWhenUnplugged)
+                }
+                toggle("Notify when a session ends", isOn: $store.config.awake.notifyOnEnd)
+            }
         }
+    }
+
+    @ObservedObject private var lid = ClosedLid.shared
+
+    @ViewBuilder
+    private var closedLidDetail: some View {
+        if lid.installed {
+            note(lid.active
+                ? "On now: closing the lid won't sleep your Mac until this session ends."
+                : "Closing the lid won't sleep your Mac while a session runs. Keep it out of a bag — it can get hot.")
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("macOS only allows this with an admin's OK. Tempo asks once, then turns it on and off by itself — and always back off when the session ends or Tempo quits.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button {
+                        lid.install()
+                    } label: {
+                        HStack(spacing: 4) {
+                            if lid.busy { ProgressView().controlSize(.mini) }
+                            Text(lid.busy ? "Waiting…" : "Allow once…")
+                        }
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(theme.gradient))
+                        .foregroundStyle(.white)
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(lid.busy)
+                    Spacer(minLength: 0)
+                }
+                if let error = lid.lastError {
+                    Text(error).font(.caption2).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.leading, 12)
+        }
+    }
+
+    private var drivesDetail: some View {
+        let mounted = DriveKeeper.externalVolumes()
+        return VStack(alignment: .leading, spacing: 6) {
+            TagChips(items: awake.drives, theme: theme, addLabel: awake.drives.isEmpty ? "Only some…" : "Add drive") {
+                Text($0.name)
+            } icon: { _ in
+                Image(systemName: "externaldrive.fill").font(.system(size: 9))
+            } remove: { drive in
+                store.config.awake.drives.removeAll { $0.id == drive.id }
+            } addMenu: {
+                let taken = Set(awake.drives.map(\.id))
+                let free = mounted.filter { !taken.contains($0.id) }
+                if free.isEmpty { Text("No other drives connected") }
+                ForEach(free) { drive in
+                    Button(drive.name) { store.config.awake.drives.append(drive) }
+                }
+            }
+            note(awake.drives.isEmpty
+                ? (mounted.isEmpty ? "Covers every external drive. None connected right now."
+                    : "Covers every external drive: \(mounted.map(\.name).joined(separator: ", ")).")
+                : "Touches a hidden file on these drives every minute while awake.")
+                .padding(.leading, -12)
+        }
+        .padding(.leading, 12)
     }
 
     private var autoSummary: String {
@@ -343,8 +431,7 @@ struct AwakeTab: View {
         guard t.anyConfigured else { return "Off" }
         if !t.enabled { return "Paused" }
         if case .trigger(let reason) = engine.state?.source { return reason }
-        let count = [t.externalDisplay, t.onPower, t.workHours].filter { $0 }.count + t.apps.count
-        return count == 1 ? "1 rule" : "\(count) rules"
+        return t.ruleCount == 1 ? "1 rule" : "\(t.ruleCount) rules"
     }
 
     private var autoBody: some View {
@@ -357,10 +444,12 @@ struct AwakeTab: View {
             if engine.env.hasBattery {
                 toggle("Plugged in to power", isOn: $store.config.awake.triggers.onPower)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("One of these apps is open")
-                    .font(.system(.subheadline, design: .rounded))
-                FlowChips(items: awake.triggers.apps, theme: theme) { app in
+            ruleGroup("One of these apps is open") {
+                TagChips(items: awake.triggers.apps, theme: theme, addLabel: "Add app") {
+                    Text($0.name)
+                } icon: {
+                    Image(nsImage: $0.icon).resizable().frame(width: 14, height: 14)
+                } remove: { app in
                     store.config.awake.triggers.apps.removeAll { $0 == app }
                 } addMenu: {
                     let taken = Set(awake.triggers.apps.map(\.bundleID))
@@ -373,11 +462,74 @@ struct AwakeTab: View {
                     }
                 }
             }
+            ruleGroup("On one of these Wi-Fi networks") { WiFiRule(theme: theme) }
+            ruleGroup("One of these USB devices is plugged in") {
+                TagChips(items: awake.triggers.usbDevices, theme: theme, addLabel: "Add device") {
+                    Text($0.name)
+                } icon: { _ in
+                    Image(systemName: "cable.connector").font(.system(size: 9))
+                } remove: { device in
+                    store.config.awake.triggers.usbDevices.removeAll { $0.id == device.id }
+                } addMenu: {
+                    let taken = Set(awake.triggers.usbDevices.map(\.id))
+                    let free = USBDevices.connected().filter { !taken.contains($0.id) }
+                    if free.isEmpty { Text("No other USB devices plugged in") }
+                    ForEach(free) { device in
+                        Button(device.name) { store.config.awake.triggers.usbDevices.append(device) }
+                    }
+                }
+            }
             if awake.triggers.anyConfigured {
                 Divider()
                 toggle("Automatic keep-awake on", isOn: $store.config.awake.triggers.enabled)
             }
         }
+    }
+
+    private func ruleGroup(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(.subheadline, design: .rounded))
+            content()
+        }
+    }
+
+    /// A small heading over a run of related switches.
+    private func group(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+                .kerning(0.8)
+                .padding(.top, 2)
+            content()
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 12)
+    }
+
+    private func hint(_ text: String, action: String, perform: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Button(action, action: perform)
+                .buttonStyle(.plain)
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(theme.gradient)
+        }
+        .padding(.leading, 12)
     }
 
     private func toggle(_ label: String, isOn: Binding<Bool>) -> some View {
@@ -405,21 +557,24 @@ struct AwakeTab: View {
     }
 }
 
-/// App chips with a remove button each, plus an "Add app" menu chip.
-struct FlowChips<AddMenu: View>: View {
-    var items: [AppRef]
+/// Removable chips plus an "Add" menu chip (apps, drives, networks, devices).
+struct TagChips<Item: Identifiable, Title: View, Icon: View, AddMenu: View>: View {
+    var items: [Item]
     var theme: Theme
-    var remove: (AppRef) -> Void
+    var addLabel: String
+    @ViewBuilder var title: (Item) -> Title
+    @ViewBuilder var icon: (Item) -> Icon
+    var remove: (Item) -> Void
     @ViewBuilder var addMenu: () -> AddMenu
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 6)], alignment: .leading, spacing: 6) {
-            ForEach(items) { app in
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(items) { item in
                 HStack(spacing: 4) {
-                    Image(nsImage: app.icon).resizable().frame(width: 14, height: 14)
-                    Text(app.name).lineLimit(1)
+                    icon(item)
+                    title(item).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 0)
-                    Button { remove(app) } label: {
+                    Button { remove(item) } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
                     }
                     .buttonStyle(.plain)
@@ -434,7 +589,7 @@ struct FlowChips<AddMenu: View>: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "plus").font(.system(size: 9, weight: .bold))
-                    Text("Add app")
+                    Text(addLabel).lineLimit(1)
                 }
                 .font(.system(.caption, design: .rounded).weight(.semibold))
                 .padding(.horizontal, 8)
@@ -447,6 +602,80 @@ struct FlowChips<AddMenu: View>: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
         }
+    }
+}
+
+/// Wi-Fi networks that keep the Mac awake. macOS only reveals network
+/// names to apps with Location access, so this asks for it in place.
+struct WiFiRule: View {
+    @EnvironmentObject var store: ConfigStore
+    @ObservedObject private var wifi = WiFiWatcher.shared
+    var theme: Theme
+    @ViewState private var typing = false
+    @ViewState private var typed = ""
+
+    private var networks: [String] { store.config.awake.triggers.wifiNetworks }
+
+    var body: some View {
+        let current = wifi.currentSSID()
+        VStack(alignment: .leading, spacing: 6) {
+            TagChips(items: networks.map(Network.init), theme: theme, addLabel: "Add network") {
+                Text($0.id)
+            } icon: { _ in
+                Image(systemName: "wifi").font(.system(size: 9, weight: .semibold))
+            } remove: { network in
+                store.config.awake.triggers.wifiNetworks.removeAll { $0 == network.id }
+            } addMenu: {
+                if let current, !networks.contains(current) {
+                    Button("Current network: \(current)") { add(current) }
+                    Divider()
+                }
+                Button("Type a name…") { typing = true }
+            }
+            if typing {
+                HStack(spacing: 6) {
+                    TextField("Network name", text: $typed)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .onSubmit(commit)
+                    Button("Add", action: commit)
+                        .controlSize(.small)
+                        .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            if !wifi.authorized {
+                HStack(spacing: 6) {
+                    Image(systemName: "location.fill").font(.system(size: 9)).foregroundStyle(.orange)
+                    Text(wifi.denied ? "macOS hides network names until Tempo has Location access."
+                        : "Tempo needs Location access to see which network you're on.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button(wifi.denied ? "Open Settings" : "Allow") {
+                        if wifi.denied { wifi.openLocationSettings() } else { wifi.requestAccess() }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(theme.gradient)
+                }
+            }
+        }
+    }
+
+    private func commit() {
+        add(typed.trimmingCharacters(in: .whitespaces))
+        typed = ""
+        typing = false
+    }
+
+    private func add(_ name: String) {
+        guard !name.isEmpty, !networks.contains(name) else { return }
+        store.config.awake.triggers.wifiNetworks.append(name)
+    }
+
+    private struct Network: Identifiable {
+        var id: String
     }
 }
 
@@ -470,74 +699,273 @@ enum RunningApps {
     }
 }
 
-/// "For 1h 30m" or "Until 17:30" — the session you can't get from a chip.
+/// Everything the chips can't do: any length, any date and time, or
+/// "while this app is open".
 struct CustomAwakePopover: View {
     var theme: Theme
     var start: (AwakeSessionKind) -> Void
-    @ViewState private var mode = 0
+    @ViewState private var mode = Mode.duration
     @ViewState private var hours = 1
     @ViewState private var minutes = 30
-    @ViewState private var until = Date().addingTimeInterval(3 * 3600)
+    @ViewState private var until = CustomAwakePopover.defaultUntil()
+
+    enum Mode: String, CaseIterable, Identifiable {
+        case duration = "For"
+        case until = "Until"
+        case app = "While app"
+        var id: String { rawValue }
+    }
+
+    private var cal: Calendar { Calendar.current }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("", selection: $mode) {
-                Text("For").tag(0)
-                Text("Until").tag(1)
+                ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            if mode == 0 {
-                HStack(spacing: 14) {
-                    Stepper(value: $hours, in: 0...23) {
-                        Text("\(hours)h").monospacedDigit().frame(width: 30, alignment: .trailing)
-                    }
-                    Stepper(value: $minutes, in: 0...55, step: 5) {
-                        Text("\(minutes)m").monospacedDigit().frame(width: 30, alignment: .trailing)
-                    }
-                }
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-            } else {
-                HStack {
-                    DatePicker("", selection: $until, displayedComponents: .hourAndMinute)
-                        .datePickerStyle(.stepperField)
-                        .labelsHidden()
-                    Text(untilCaption)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            switch mode {
+            case .duration: durationBody
+            case .until: untilBody
+            case .app: appBody
             }
-            Button {
-                if mode == 0 {
-                    start(.until(AwakePlanner.end(afterMinutes: max(1, hours * 60 + minutes), from: Date())))
-                } else {
-                    start(.until(AwakePlanner.nextOccurrence(ofTimeIn: until, after: Date())))
-                }
-            } label: {
-                Text("Start")
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(theme.gradient))
-                    .foregroundStyle(.white)
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(mode == 0 && hours == 0 && minutes == 0)
         }
         .padding(14)
-        .frame(width: 230)
+        .frame(width: 284)
     }
 
-    private var untilCaption: String {
-        let next = AwakePlanner.nextOccurrence(ofTimeIn: until, after: Date())
-        return Calendar.current.isDateInToday(next) ? "today" : "tomorrow"
+    // MARK: For
+
+    private var durationBody: some View {
+        let total = hours * 60 + minutes
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                NumberDial(value: $hours, range: 0...72, step: 1, unit: hours == 1 ? "hour" : "hours", theme: theme)
+                NumberDial(value: $minutes, range: 0...55, step: 5, unit: "min", theme: theme)
+            }
+            HStack(spacing: 6) {
+                ForEach([15, 45, 180, 480], id: \.self) { m in
+                    Button {
+                        hours = m / 60
+                        minutes = m % 60
+                    } label: {
+                        Text(AwakePlanner.durationLabel(m))
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity)
+                            .background(Capsule().fill(total == m ? AnyShapeStyle(theme.gradient)
+                                : AnyShapeStyle(Color.primary.opacity(0.07))))
+                            .foregroundStyle(total == m ? .white : .primary)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            summary(total > 0
+                ? "Ends \(AwakePlanner.untilLabel(AwakePlanner.end(afterMinutes: total, from: Date()), now: Date()))"
+                : "Pick a length", ok: total > 0)
+            startButton(total > 0 ? "Start · \(AwakePlanner.durationLabel(total))" : "Start", enabled: total > 0) {
+                start(.until(AwakePlanner.end(afterMinutes: total, from: Date())))
+            }
+        }
+    }
+
+    // MARK: Until
+
+    private var untilBody: some View {
+        let now = Date()
+        let valid = until > now.addingTimeInterval(30)
+        return VStack(alignment: .leading, spacing: 10) {
+            DatePicker("", selection: dayBinding, in: cal.startOfDay(for: now)..., displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+            HStack(spacing: 8) {
+                Text("At")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+                DatePicker("", selection: timeBinding, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.stepperField)
+                    .labelsHidden()
+                Spacer(minLength: 0)
+                ForEach([9, 18], id: \.self) { hour in
+                    Button(hourLabel(hour)) { setHour(hour) }
+                        .buttonStyle(.plain)
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.primary.opacity(0.07)))
+                }
+            }
+            summary(valid
+                ? "Ends \(AwakePlanner.untilLabel(until, now: now)) · in \(AwakePlanner.remaining(until.timeIntervalSince(now)))"
+                : "That time has already passed", ok: valid)
+            startButton(valid ? "Start · until \(AwakePlanner.untilLabel(until, now: now))" : "Start", enabled: valid) {
+                start(.until(until))
+            }
+        }
+    }
+
+    private var dayBinding: Binding<Date> {
+        Binding { until } set: { until = AwakePlanner.combine(day: $0, time: until, cal: cal) }
+    }
+
+    private var timeBinding: Binding<Date> {
+        Binding { until } set: { until = AwakePlanner.combine(day: until, time: $0, cal: cal) }
+    }
+
+    private func setHour(_ hour: Int) {
+        if let time = cal.date(bySettingHour: hour, minute: 0, second: 0, of: until) { until = time }
+    }
+
+    private func hourLabel(_ hour: Int) -> String {
+        AwakePlanner.clock(cal.date(bySettingHour: hour, minute: 0, second: 0, of: Date()) ?? Date())
+    }
+
+    /// Three hours out, on a quarter hour.
+    static func defaultUntil(now: Date = Date()) -> Date {
+        let later = now.addingTimeInterval(3 * 3600)
+        let minute = Calendar.current.component(.minute, from: later)
+        let rounded = later.addingTimeInterval(TimeInterval((15 - minute % 15) % 15) * 60)
+        return Calendar.current.date(bySetting: .second, value: 0, of: rounded) ?? rounded
+    }
+
+    // MARK: While app
+
+    private var appBody: some View {
+        let apps = RunningApps.regular()
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Stay awake until the app quits.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(apps) { app in
+                        AppPickRow(app: app, theme: theme) { start(.whileApp(app)) }
+                    }
+                }
+            }
+            .frame(height: min(CGFloat(max(apps.count, 1)) * 30, 240))
+            if apps.isEmpty {
+                Text("No apps running").font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    // MARK: Pieces
+
+    private func summary(_ text: String, ok: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: ok ? "clock" : "exclamationmark.circle")
+                .font(.system(size: 10, weight: .semibold))
+            Text(text)
+                .font(.system(.caption, design: .rounded).weight(.medium))
+                .monospacedDigit()
+        }
+        .foregroundStyle(ok ? AnyShapeStyle(Color.secondary) : AnyShapeStyle(Color.orange))
+    }
+
+    private func startButton(_ label: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "bolt.fill").font(.system(size: 10, weight: .bold))
+                Text(label).lineLimit(1).minimumScaleFactor(0.85)
+            }
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(theme.gradient))
+            .foregroundStyle(.white)
+            .opacity(enabled ? 1 : 0.4)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
+/// A big number with − / + on either side and its unit underneath.
+struct NumberDial: View {
+    @Binding var value: Int
+    var range: ClosedRange<Int>
+    var step: Int
+    var unit: String
+    var theme: Theme
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 0) {
+                button("minus", enabled: value > range.lowerBound) { value = max(range.lowerBound, value - step) }
+                Text("\(value)")
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.gradient)
+                    .frame(minWidth: 44)
+                    .contentTransition(.numericText())
+                    .animation(.snappy(duration: 0.15), value: value)
+                button("plus", enabled: value < range.upperBound) { value = min(range.upperBound, value + step) }
+            }
+            Text(unit)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .kerning(0.8)
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.06)))
+    }
+
+    private func button(_ icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.primary.opacity(enabled ? 0.08 : 0.03)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(enabled ? .primary : .tertiary)
+        .disabled(!enabled)
+    }
+}
+
+/// One running app in the "While app" list; highlights under the pointer.
+struct AppPickRow: View {
+    var app: AppRef
+    var theme: Theme
+    var action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(nsImage: app.icon).resizable().frame(width: 20, height: 20)
+                Text(app.name)
+                    .font(.system(.subheadline, design: .rounded))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(theme.gradient)
+                    .opacity(hovering ? 1 : 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(hovering ? 0.08 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
 /// Settings → Awake: the global shortcut and session defaults.
 struct AwakeSettingsSection: View {
     @EnvironmentObject var store: ConfigStore
+    @ObservedObject private var lid = ClosedLid.shared
 
     private static let durations = [0, 15, 30, 60, 120, 240, 480]
 
@@ -582,6 +1010,19 @@ struct AwakeSettingsSection: View {
             toggle("Show time left in the menu bar", $store.config.awake.showTimeInMenuBar)
             toggle("Keep awake when Tempo launches", $store.config.awake.startAtLaunch)
             toggle("Play a sound on start and stop", $store.config.awake.sounds)
+            if lid.installed {
+                HStack {
+                    Text("Closed-lid permission")
+                        .font(.system(.subheadline, design: .rounded))
+                    Spacer()
+                    Button("Remove…") { lid.uninstall() }
+                        .controlSize(.small)
+                        .disabled(lid.busy)
+                }
+                Text("Takes away the sudo rule that lets Tempo keep the Mac awake with the lid closed.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 

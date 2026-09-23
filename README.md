@@ -65,7 +65,8 @@ Four tabs across the top:
   day and an agenda list underneath.
 - **Awake** — keep your Mac from sleeping. See below.
 
-The **gear** opens settings; the **power button** quits Tempo.
+A tab only shows while its feature is on (see **Features** below). The **gear**
+opens settings; the **power button** quits Tempo.
 
 ### Tasks and due dates
 
@@ -120,21 +121,43 @@ still showing after you drop, press **Escape** to dismiss it.
 
 The **Awake** tab keeps your Mac from sleeping, the way Amphetamine does.
 
-- **One tap to start.** Pick 30m, 1h, 2h, or 4h, **Until 18:00** (today's work
-  end, from your schedule), **Forever**, **Custom** (for a duration or until a
-  time), or **While app** (stays awake until that app quits).
+- **One tap to start.** Pick 30m, 1h, 2h, or 4h, **Until 6:00 PM** (today's
+  work end, from your schedule), **Forever**, or **Custom**. Custom starts a
+  session for any length, until any date and time (a calendar plus a time
+  picker), or while an app stays open.
 - **While it runs,** a ring counts down the time left, **+15m** and **+1h** add
   time, and **Stop** ends it. A bolt appears in the menu bar, with the time left.
-- **Options:** keep the screen on or let it sleep, allow the screen saver after
-  a few idle minutes, stop on low battery or when unplugged, and get a
-  notification when a session ends.
+- **Options:**
+  - keep the screen on or let it sleep, and allow the screen saver after a few
+    idle minutes
+  - **move the pointer when idle**, a one-pixel nudge after 1–60 idle minutes so
+    Slack, Teams, and Zoom don't mark you away (needs Accessibility, like the
+    switcher; it never wakes a sleeping screen or the lock screen)
+  - **stay awake with the lid closed**, on a MacBook with no external display
+    (see below)
+  - **keep external drives spinning**, by touching a hidden file on them every
+    minute (all external drives, or the ones you pick)
+  - stop on low battery or when unplugged, and get a notification when a
+    session ends
 - **Automatic:** stay awake by itself during work hours, with an external
-  display connected, while plugged in, or while chosen apps are open.
+  display connected, while plugged in, while chosen apps are open, on chosen
+  **Wi-Fi networks**, or while chosen **USB devices** are plugged in. macOS
+  only shows Wi-Fi network names to apps with Location access, so the Wi-Fi
+  rule asks for it once. Tempo never reads your location.
 - **Settings** add a global shortcut to start or stop, the length of the
   **Keep awake** button, a warning before a session ends, and start-at-launch.
 
-A session survives quitting and relaunching Tempo. Closing the lid still puts
-the Mac to sleep, as it does with Amphetamine's defaults.
+A session survives quitting and relaunching Tempo.
+
+**Closed-lid mode.** macOS sleeps a closed MacBook no matter what an app asks,
+unless sleep is switched off system-wide (`pmset disablesleep`), which needs
+an administrator. The first time you turn it on, Tempo asks for your password
+once and adds a sudo rule (`/etc/sudoers.d/tempo-closed-lid`) that allows only
+`pmset -a disablesleep 1` and `pmset -a disablesleep 0`. After that, Tempo
+switches sleep off when a session starts and back on when it ends. If Tempo
+quits or crashes, a small watchdog turns sleep back on. **Settings → Awake →
+Remove…** deletes the rule. A closed Mac that stays awake can get hot, so keep
+it out of a bag.
 
 ### Window switcher
 
@@ -171,6 +194,13 @@ Spaces and screens it uses, and apps to never show.
 ## Customize
 
 Open settings with the **gear** icon in the panel.
+
+- **Features** — switch each part of Tempo on or off: **Work hours** (progress
+  and the menu bar percentages), **Tasks** (the Tasks and Week tabs and their
+  reminders), **Keep awake**, **Window switcher**, and **Shelf**. Turning one
+  off hides its tab, settings, and menu bar pieces and stops it running. With
+  work hours off, the menu bar shows a plain icon (or just the bolt while
+  awake).
 
 - **Schedule** — work start and end times, which days count as workdays, and
   **per-day hours** (e.g. Friday 10:00–17:00). Day, week, month, and year math

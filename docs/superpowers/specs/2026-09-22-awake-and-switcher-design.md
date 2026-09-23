@@ -137,3 +137,25 @@ runs `tccutil reset` for both services before installing, and the app shows a
 
 Self-checks (`Tempo --check`) cover the pure parts: config round-trips,
 `AwakePlanner`, `KeyCombo`, window filtering/ordering, and layout math.
+
+## Additions (2026-09-23)
+
+**Features.** `AppConfig.features` (`FeatureSet`: workHours, tasks, awake,
+shelf) plus `switcher.enabled` are the switches in Settings → Features.
+`AppConfig.isOn(_:)` / `set(_:on:)` read and write all five. Panel tabs,
+settings sections, the menu bar item, the Shelf drag watcher, task reminders
+and the Awake engine all follow them.
+
+**Awake additions** (`AwakeExtras.swift`):
+
+| Piece | How |
+|---|---|
+| Closed-lid mode | `sudo -n pmset -a disablesleep 1/0` through a one-time, visudo-checked rule in `/etc/sudoers.d/tempo-closed-lid`; a watchdog shell resets it if Tempo dies; a UserDefaults marker resets it at next launch |
+| Drive Alive | writes `.tempo-drive-alive` to each chosen external volume every 60 s while awake, off the main thread; removed when the session ends |
+| Cursor nudge | posts a ±1 px `mouseMoved` pair after N minutes of *real* idle (our own nudges don't count); skipped while the display sleeps, the screen is locked or the saver runs |
+| Wi-Fi trigger | `CWWiFiClient` SSID, visible only with Location authorization (`CLLocationManager`) |
+| USB trigger | `IOUSBHostDevice` registry entries, keyed `vendor:product`, hubs skipped |
+
+The Custom popover gained a date + time mode (graphical calendar plus a time
+stepper) and absorbed the "While app" menu, so the second chip row fits:
+`Until <work end>` at its natural width, then Forever and Custom.

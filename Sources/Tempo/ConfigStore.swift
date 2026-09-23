@@ -14,9 +14,14 @@ final class ConfigStore: ObservableObject {
             if config.launchAtLogin != oldValue.launchAtLogin {
                 applyLaunchAtLogin(config.launchAtLogin)
             }
+            if config.todos != oldValue.todos || config.features.tasks != oldValue.features.tasks {
+                ReminderScheduler.shared.sync(config.features.tasks ? config.todos : [])
+            }
             if config.todos != oldValue.todos {
-                ReminderScheduler.shared.sync(config.todos)
                 pushDoneChangesToAppleReminders(oldTodos: oldValue.todos)
+            }
+            if !config.features.shelf && oldValue.features.shelf {
+                ShelfWindow.shared.hide()
             }
         }
     }
@@ -30,7 +35,7 @@ final class ConfigStore: ObservableObject {
             self.config.todos[index].done = true
         }
         // Re-arm due-task notifications after a relaunch or reboot.
-        ReminderScheduler.shared.sync(config.todos)
+        ReminderScheduler.shared.sync(config.features.tasks ? config.todos : [])
     }
 
     /// Checking a task off in Tempo completes its Apple reminder (and back).

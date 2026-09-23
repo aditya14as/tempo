@@ -12,7 +12,6 @@ struct SwitcherSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            toggle("Window switcher", $store.config.switcher.enabled)
             if config.enabled {
                 permissionRow
                 row("Hold") {
@@ -100,7 +99,11 @@ struct SwitcherSettingsSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Never show")
                 .font(.system(.subheadline, design: .rounded))
-            FlowChips(items: config.hiddenApps, theme: theme) { app in
+            TagChips(items: config.hiddenApps, theme: theme, addLabel: "Add app") {
+                Text($0.name)
+            } icon: {
+                Image(nsImage: $0.icon).resizable().frame(width: 14, height: 14)
+            } remove: { app in
                 store.config.switcher.hiddenApps.removeAll { $0 == app }
             } addMenu: {
                 let taken = Set(config.hiddenApps.map(\.bundleID))

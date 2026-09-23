@@ -343,6 +343,12 @@ final class DragWatcher {
     private func tick() {
         let pb = NSPasteboard(name: .drag)
         let mouseDown = NSEvent.pressedMouseButtons & 1 == 1
+        // Shelf switched off in Settings → Features: stay out of every drag.
+        guard ConfigStore.shared?.config.features.shelf ?? true else {
+            lastDragChange = pb.changeCount
+            dragActive = false
+            return
+        }
 
         if dragActive {
             ShelfWindow.shared.tickIdle(dragActive: true)
@@ -411,7 +417,7 @@ enum StatusItemDropper {
         drop.autoresizingMask = [.width, .height]
         drop.forwardClicksTo = button
         drop.onDrop = { urls in
-            guard let store = ConfigStore.shared else { return }
+            guard let store = ConfigStore.shared, store.config.features.shelf else { return }
             store.addToShelf(urls)
             ShelfWindow.shared.reveal(store: store)
         }

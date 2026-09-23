@@ -343,6 +343,8 @@ struct AppConfig: Codable, Equatable {
     var awake = AwakeConfig()
     /// The ⌥⇥ window switcher (the AltTab side of Tempo).
     var switcher = SwitcherConfig()
+    /// Which parts of Tempo are switched on (Settings → Features).
+    var features = FeatureSet()
 
     static let maxTodos = 5
     static let maxShelf = 12
@@ -370,6 +372,27 @@ struct AppConfig: Codable, Equatable {
         shelf = (try? c.decodeIfPresent([ShelfItem].self, forKey: .shelf)) ?? d.shelf
         awake = c.value(.awake, or: d.awake)
         switcher = c.value(.switcher, or: d.switcher)
+        features = c.value(.features, or: d.features)
+    }
+
+    func isOn(_ feature: Feature) -> Bool {
+        switch feature {
+        case .workHours: return features.workHours
+        case .tasks: return features.tasks
+        case .awake: return features.awake
+        case .switcher: return switcher.enabled
+        case .shelf: return features.shelf
+        }
+    }
+
+    mutating func set(_ feature: Feature, on: Bool) {
+        switch feature {
+        case .workHours: features.workHours = on
+        case .tasks: features.tasks = on
+        case .awake: features.awake = on
+        case .switcher: switcher.enabled = on
+        case .shelf: features.shelf = on
+        }
     }
 
     func row(_ metric: Metric) -> RowConfig {

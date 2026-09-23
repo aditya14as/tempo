@@ -83,6 +83,79 @@ struct KeyCombo: Codable, Equatable, Hashable {
     ]
 }
 
+/// A mounted drive that Drive Alive keeps from spinning down.
+struct DriveRef: Codable, Equatable, Hashable, Identifiable {
+    /// The volume UUID when the drive has one, else its mount path.
+    var id: String
+    var name: String
+    var path: String
+}
+
+/// A USB device, by vendor and product ID, with the name it reports.
+struct USBDeviceRef: Codable, Equatable, Hashable, Identifiable {
+    var vendorID: Int
+    var productID: Int
+    var name: String
+    var id: String { "\(vendorID):\(productID)" }
+}
+
+// MARK: - Features (pick what Tempo does)
+
+/// The parts of Tempo you can switch on and off from Settings → Features.
+enum Feature: String, CaseIterable, Identifiable {
+    case workHours, tasks, awake, switcher, shelf
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .workHours: return "Work hours"
+        case .tasks: return "Tasks"
+        case .awake: return "Keep awake"
+        case .switcher: return "Window switcher"
+        case .shelf: return "Shelf"
+        }
+    }
+    var blurb: String {
+        switch self {
+        case .workHours: return "Day, week, month and year progress in the menu bar"
+        case .tasks: return "Top 5 tasks with reminders, plus the week view"
+        case .awake: return "Keep your Mac from sleeping, like Amphetamine"
+        case .switcher: return "Hold ⌥ and press ⇥ to switch windows, like AltTab"
+        case .shelf: return "A floating drop zone for files you drag around"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .workHours: return "gauge.with.needle"
+        case .tasks: return "checklist"
+        case .awake: return "bolt.fill"
+        case .switcher: return "rectangle.stack.fill"
+        case .shelf: return "tray.full.fill"
+        }
+    }
+}
+
+/// Which features are on. The switcher's switch lives in `SwitcherConfig.enabled`.
+struct FeatureSet: Codable, Equatable {
+    var workHours = true
+    var tasks = true
+    var awake = true
+    var shelf = true
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey { case workHours, tasks, awake, shelf }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = FeatureSet()
+        workHours = c.value(.workHours, or: d.workHours)
+        tasks = c.value(.tasks, or: d.tasks)
+        awake = c.value(.awake, or: d.awake)
+        shelf = c.value(.shelf, or: d.shelf)
+    }
+}
+
 // MARK: - Awake (keep the Mac from sleeping)
 
 /// What ends a keep-awake session.
@@ -122,12 +195,25 @@ struct AwakeTriggers: Codable, Equatable {
     /// Tempo already knows your schedule; stay awake during work hours.
     var workHours = false
     var apps: [AppRef] = []
+    /// Stay awake while joined to one of these Wi-Fi networks (by name).
+    var wifiNetworks: [String] = []
+    /// Stay awake while one of these USB devices is plugged in.
+    var usbDevices: [USBDeviceRef] = []
 
-    var anyConfigured: Bool { externalDisplay || onPower || workHours || !apps.isEmpty }
+    var anyConfigured: Bool {
+        externalDisplay || onPower || workHours || !apps.isEmpty || !wifiNetworks.isEmpty || !usbDevices.isEmpty
+    }
+
+    /// How many separate rules are set up (for the "3 rules" summary).
+    var ruleCount: Int {
+        [externalDisplay, onPower, workHours].filter { $0 }.count + apps.count + wifiNetworks.count + usbDevices.count
+    }
 
     init() {}
 
-    private enum CodingKeys: String, CodingKey { case enabled, externalDisplay, onPower, workHours, apps }
+    private enum CodingKeys: String, CodingKey {
+        case enabled, externalDisplay, onPower, workHours, apps, wifiNetworks, usbDevices
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -137,6 +223,8 @@ struct AwakeTriggers: Codable, Equatable {
         onPower = c.value(.onPower, or: d.onPower)
         workHours = c.value(.workHours, or: d.workHours)
         apps = c.value(.apps, or: d.apps)
+        wifiNetworks = c.value(.wifiNetworks, or: d.wifiNetworks)
+        usbDevices = c.value(.usbDevices, or: d.usbDevices)
     }
 }
 
@@ -165,6 +253,16 @@ struct AwakeConfig: Codable, Equatable {
     var presets: [Int] = [30, 60, 120, 240]
     var showTimeInMenuBar = true
     var toggleShortcut: KeyCombo? = nil
+    /// Keep running with the lid closed and no external display
+    /// (`pmset disablesleep`, via a one-time admin-approved sudo rule).
+    var closedLid = false
+    /// Touch a hidden file on external drives so they don't spin down.
+    var driveAlive = false
+    /// Drives Drive Alive covers; empty = every external drive.
+    var drives: [DriveRef] = []
+    /// Nudge the pointer after this much idle time, so chat apps keep you "active".
+    var moveCursor = false
+    var moveCursorMinutes = 1
     var triggers = AwakeTriggers()
     /// The running manual session, if any (survives a relaunch).
     var session: AwakeSession? = nil
@@ -175,6 +273,7 @@ struct AwakeConfig: Codable, Equatable {
         case allowDisplaySleep, allowScreenSaver, screenSaverMinutes, endOnLowBattery, lowBatteryPercent, endWhenUnplugged
         case notifyOnEnd, warnBeforeEndMinutes, sounds, startAtLaunch, defaultMinutes, presets
         case showTimeInMenuBar, toggleShortcut, triggers, session
+        case closedLid, driveAlive, drives, moveCursor, moveCursorMinutes
     }
 
     init(from decoder: Decoder) throws {
@@ -194,6 +293,11 @@ struct AwakeConfig: Codable, Equatable {
         presets = c.value(.presets, or: d.presets)
         showTimeInMenuBar = c.value(.showTimeInMenuBar, or: d.showTimeInMenuBar)
         toggleShortcut = c.value(.toggleShortcut, or: d.toggleShortcut)
+        closedLid = c.value(.closedLid, or: d.closedLid)
+        driveAlive = c.value(.driveAlive, or: d.driveAlive)
+        drives = c.value(.drives, or: d.drives)
+        moveCursor = c.value(.moveCursor, or: d.moveCursor)
+        moveCursorMinutes = c.value(.moveCursorMinutes, or: d.moveCursorMinutes)
         triggers = c.value(.triggers, or: d.triggers)
         session = c.value(.session, or: d.session)
     }

@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var store: ConfigStore
     var onBack: () -> Void
+    /// Draw attention to Features (the panel had nothing to show).
+    var highlightFeatures = false
     @ViewState private var showPerDayHours = false
 
     private static let dayOrder: [(weekday: Int, chip: String, name: String)] = [
@@ -29,6 +31,9 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    FeaturesSection(highlight: highlightFeatures)
+
+                    if on(.workHours) || on(.tasks) || on(.awake) {
                     section("Work hours") {
                         HStack {
                             DatePicker("Start", selection: allDaysBinding(\.startMinute), displayedComponents: .hourAndMinute)
@@ -56,6 +61,9 @@ struct SettingsView: View {
                         }
                     }
 
+                    }
+
+                    if on(.workHours) {
                     section("Rows") {
                         ForEach(Metric.allCases) { metric in
                             VStack(alignment: .leading, spacing: 6) {
@@ -107,6 +115,8 @@ struct SettingsView: View {
                         }
                     }
 
+                    }
+
                     section("Theme") {
                         HStack(spacing: 10) {
                             ForEach(Theme.allCases) { theme in
@@ -129,12 +139,16 @@ struct SettingsView: View {
                         }
                     }
 
-                    section("Switcher") {
-                        SwitcherSettingsSection()
+                    if on(.switcher) {
+                        section("Switcher") {
+                            SwitcherSettingsSection()
+                        }
                     }
 
-                    section("Awake") {
-                        AwakeSettingsSection()
+                    if on(.awake) {
+                        section("Awake") {
+                            AwakeSettingsSection()
+                        }
                     }
 
                     section("General") {
@@ -153,6 +167,8 @@ struct SettingsView: View {
         }
         .frame(width: 360)
     }
+
+    private func on(_ feature: Feature) -> Bool { store.config.isOn(feature) }
 
     private var resolvedSummary: String {
         let parts = [Metric.week, .month, .year].map { metric in
@@ -370,5 +386,84 @@ struct SettingsView: View {
             row[keyPath: keyPath] = value
             store.config.setRow(metric, row)
         }
+    }
+}
+
+/// Settings → Features: one switch per part of Tempo. Everything else in
+/// Settings, the panel's tabs and the menu bar follow these.
+struct FeaturesSection: View {
+    @EnvironmentObject var store: ConfigStore
+    var highlight = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Features")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .kerning(1)
+                Spacer()
+                Text("\(Feature.allCases.filter { store.config.isOn($0) }.count) of \(Feature.allCases.count) on")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            ForEach(Feature.allCases) { feature in
+                row(feature)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.045)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(highlight ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.clear),
+                              lineWidth: 1.5)
+        )
+    }
+
+    private func row(_ feature: Feature) -> some View {
+        let isOn = store.config.isOn(feature)
+        return HStack(spacing: 10) {
+            FeatureIcon(feature: feature, theme: store.config.theme, size: 28, dimmed: !isOn)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(feature.title)
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(isOn ? .primary : .secondary)
+                Text(feature.blurb)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: Binding(
+                get: { store.config.isOn(feature) },
+                set: { on in withAnimation(.easeInOut(duration: 0.2)) { store.config.set(feature, on: on) } }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+/// A feature's symbol on a rounded gradient tile.
+struct FeatureIcon: View {
+    var feature: Feature
+    var theme: Theme
+    var size: CGFloat
+    var dimmed = false
+
+    var body: some View {
+        Image(systemName: feature.icon)
+            .font(.system(size: size * 0.46, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .fill(dimmed ? AnyShapeStyle(Color.secondary.opacity(0.35)) : AnyShapeStyle(theme.gradient))
+            )
     }
 }

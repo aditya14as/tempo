@@ -490,8 +490,28 @@ enum Checks {
         featured.switcher.modifier = .control
         featured.switcher.style = .titles
         featured.switcher.hiddenApps = [AppRef(bundleID: "com.apple.Terminal", name: "Terminal")]
+        featured.awake.closedLid = true
+        featured.awake.moveCursor = true
+        featured.awake.moveCursorMinutes = 4
+        featured.awake.driveAlive = true
+        featured.awake.drives = [DriveRef(id: "UUID-1", name: "Backup", path: "/Volumes/Backup")]
+        featured.awake.triggers.wifiNetworks = ["Office"]
+        featured.awake.triggers.usbDevices = [USBDeviceRef(vendorID: 1, productID: 2, name: "Dock")]
+        featured.features.tasks = false
+        featured.features.shelf = false
         let featuredBack = (try? JSONEncoder().encode(featured)).flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
-        expect(featuredBack == featured, "awake and switcher settings survive save and load")
+        expect(featuredBack == featured, "awake, switcher and feature settings survive save and load")
+        var toggled = AppConfig()
+        toggled.set(.switcher, on: false)
+        toggled.set(.workHours, on: false)
+        expect(!toggled.isOn(.switcher) && !toggled.switcher.enabled && !toggled.isOn(.workHours)
+            && toggled.isOn(.tasks) && toggled.isOn(.awake) && toggled.isOn(.shelf),
+            "feature switches flip exactly one feature each")
+        let oldJSON = #"{"awake":{"allowDisplaySleep":true,"triggers":{"onPower":true}}}"#
+        let old = try? JSONDecoder().decode(AppConfig.self, from: Data(oldJSON.utf8))
+        expect(old?.awake.allowDisplaySleep == true && old?.awake.triggers.onPower == true
+            && old?.features == FeatureSet() && old?.awake.closedLid == false && old?.awake.triggers.wifiNetworks == [],
+            "a config saved before Features and the new Awake options loads with everything on")
         expect(featuredBack?.awake.toggleShortcut?.label == "⌃⌥A", "shortcut label renders modifiers then key")
         expect(
             featuredBack?.awake.session?.endsAt == Date(timeIntervalSince1970: 1_800_000_000),

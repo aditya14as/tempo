@@ -26,6 +26,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key>    <string>14.0</string>
     <key>LSUIElement</key>               <true/>
     <key>CFBundleIconFile</key>          <string>Tempo</string>
+    <key>NSLocationUsageDescription</key>
+    <string>Tempo reads your Wi-Fi network's name to keep your Mac awake on the networks you choose. Your location is never used.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Tempo reads your Wi-Fi network's name to keep your Mac awake on the networks you choose. Your location is never used.</string>
     <key>NSRemindersUsageDescription</key>
     <string>Tempo adds your tasks to Apple Reminders when you ask it to.</string>
     <key>NSRemindersFullAccessUsageDescription</key>

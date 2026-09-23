@@ -12,6 +12,14 @@ enum PanelTab: String, CaseIterable, Identifiable {
         case .awake: return "Awake"
         }
     }
+    /// The feature that owns this tab.
+    var feature: Feature {
+        switch self {
+        case .now: return .workHours
+        case .tasks, .week: return .tasks
+        case .awake: return .awake
+        }
+    }
     var icon: String {
         switch self {
         case .now: return "gauge.with.needle"
@@ -30,7 +38,8 @@ struct PanelView: View {
     var body: some View {
         Group {
             if showSettings {
-                SettingsView(onBack: { withAnimation(.easeInOut(duration: 0.2)) { showSettings = false } })
+                SettingsView(onBack: { withAnimation(.easeInOut(duration: 0.2)) { showSettings = false } },
+                             highlightFeatures: visibleTabs.isEmpty)
             } else {
                 progressContent
             }
@@ -47,12 +56,16 @@ struct PanelView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = context.date
             let config = store.config
+            let tabs = visibleTabs
+            let current = tabs.contains(tab) ? tab : tabs.first
             VStack(alignment: .leading, spacing: 14) {
                 header(now: now)
-                tabBar
-                switch tab {
+                if tabs.count > 1 { tabBar(tabs, current: current) }
+                if current == tabs.first { SwitcherPermissionCard() }
+                switch current {
+                case nil:
+                    NoTabsCard { withAnimation(.easeInOut(duration: 0.2)) { showSettings = true } }
                 case .now:
-                    SwitcherPermissionCard()
                     ForEach(Metric.allCases) { metric in
                         if config.row(metric).visible {
                             MetricRowView(
@@ -87,9 +100,14 @@ struct PanelView: View {
         }
     }
 
-    private var tabBar: some View {
+    /// Tabs for the features that are switched on, in their usual order.
+    private var visibleTabs: [PanelTab] {
+        PanelTab.allCases.filter { store.config.isOn($0.feature) }
+    }
+
+    private func tabBar(_ tabs: [PanelTab], current: PanelTab?) -> some View {
         HStack(spacing: 4) {
-            ForEach(PanelTab.allCases) { t in
+            ForEach(tabs) { t in
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { tab = t }
                 } label: {
@@ -101,11 +119,11 @@ struct PanelView: View {
                     .padding(.vertical, 5)
                     .frame(maxWidth: .infinity)
                     .background(
-                        Capsule().fill(tab == t
+                        Capsule().fill(current == t
                             ? AnyShapeStyle(store.config.theme.gradient)
                             : AnyShapeStyle(Color.clear))
                     )
-                    .foregroundStyle(tab == t ? .white : .secondary)
+                    .foregroundStyle(current == t ? .white : .secondary)
                     // Transparent areas don't hit-test; make the whole pill clickable.
                     .contentShape(Capsule())
                 }
@@ -146,15 +164,17 @@ struct PanelView: View {
             .foregroundStyle(.secondary)
             .help("Settings")
 
-            Button {
-                ShelfWindow.shared.toggle(store: store)
-            } label: {
-                Image(systemName: "tray.full.fill")
+            if store.config.features.shelf {
+                Button {
+                    ShelfWindow.shared.toggle(store: store)
+                } label: {
+                    Image(systemName: "tray.full.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+                .help("Shelf — a floating drop zone for files")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .padding(.leading, 12)
-            .help("Shelf — a floating drop zone for files")
 
             Spacer()
 
@@ -168,6 +188,52 @@ struct PanelView: View {
             .help("Quit Tempo")
         }
         .padding(.top, 2)
+    }
+}
+
+/// Shown when every feature with a tab is switched off.
+struct NoTabsCard: View {
+    @EnvironmentObject var store: ConfigStore
+    var openSettings: () -> Void
+
+    var body: some View {
+        let config = store.config
+        let background = [Feature.switcher, .shelf].filter { config.isOn($0) }
+        VStack(alignment: .leading, spacing: 10) {
+            if background.isEmpty {
+                Text("Every feature is off")
+                    .font(.system(.headline, design: .rounded))
+                Text("Pick what Tempo should do for you.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Working in the background")
+                    .font(.system(.headline, design: .rounded))
+                ForEach(background) { feature in
+                    HStack(spacing: 8) {
+                        FeatureIcon(feature: feature, theme: config.theme, size: 22)
+                        Text(feature == .switcher
+                            ? "Hold \(config.switcher.modifier.symbol) and press ⇥ to switch windows"
+                            : "Start dragging a file and the Shelf pops up")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Button(action: openSettings) {
+                Label("Choose features", systemImage: "square.grid.2x2.fill")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(config.theme.gradient))
+                    .foregroundStyle(.white)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.045)))
     }
 }
 

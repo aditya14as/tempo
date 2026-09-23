@@ -8,12 +8,14 @@ struct MenuBarLabel: View {
 
     var body: some View {
         let config = store.config
-        if let state = awake.state {
+        if let state = awake.state, config.features.awake {
             // Awake: a bolt (plus optional time left) leads the usual item.
+            // Without work-hours progress the bolt stands in for the icon.
+            let progress = config.features.workHours
             Image(nsImage: MenuBarAwake.compose(
                 awakeText: awakeText(state, config: config),
-                base: baseImage(config),
-                text: baseText(config)
+                base: progress ? baseImage(config) : nil,
+                text: progress ? baseText(config) : nil
             ))
         } else if let image = baseImage(config) {
             Image(nsImage: image)
@@ -30,6 +32,7 @@ struct MenuBarLabel: View {
 
     /// The item as an image, or nil for the plain-text style.
     private func baseImage(_ config: AppConfig) -> NSImage? {
+        guard config.features.workHours else { return Self.appIcon }
         if config.menuBarShows == .todayWeek {
             // Today + week side by side: letter badge + percent + mini progress bar.
             let today = ProgressEngine.snapshot(.today, now: ticker.now, config: config)
@@ -45,16 +48,20 @@ struct MenuBarLabel: View {
         case .text:
             return nil
         case .icon:
-            let image = NSImage(systemSymbolName: "circle.lefthalf.filled.inverse", accessibilityDescription: "Tempo")
-            image?.isTemplate = true
-            return image
+            return Self.appIcon
         case .ring:
             return MenuBarRing.image(fraction: snapshot.fraction ?? 0, letter: metric.shortLetter)
         }
     }
 
+    private static let appIcon: NSImage? = {
+        let image = NSImage(systemSymbolName: "circle.lefthalf.filled.inverse", accessibilityDescription: "Tempo")
+        image?.isTemplate = true
+        return image
+    }()
+
     private func baseText(_ config: AppConfig) -> String? {
-        guard config.menuBarShows != .todayWeek, config.menuBarStyle == .text else { return nil }
+        guard config.features.workHours, config.menuBarShows != .todayWeek, config.menuBarStyle == .text else { return nil }
         let metric = config.menuBarShows.metric ?? .week
         let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
         return "\(metric.shortLetter) \(ProgressEngine.percentText(snapshot.fraction))"
