@@ -384,9 +384,26 @@ final class DragWatcher {
         ShelfWindow.shared.revealForDrag(store: store)
     }
 
+    /// The menu bar icon's window doesn't count: nothing is dragged out of
+    /// it, and Zed only hands its drag to macOS once the pointer leaves its
+    /// window — often already up over Tempo's icon — which used to read as
+    /// "a drag out of Tempo" and kept the card from ever appearing.
+    /// A file drag reached the menu bar icon but the watcher hadn't taken it
+    /// up (it started somewhere the watcher skipped): pop the card now, so it
+    /// is under the pointer before Mission Control opens.
+    func adoptDrag() {
+        guard !dragActive, NSEvent.pressedMouseButtons & 1 == 1,
+            let store = ConfigStore.shared, store.config.features.shelf
+        else { return }
+        lastDragChange = NSPasteboard(name: .drag).changeCount
+        dragActive = true
+        ShelfWindow.shared.revealForDrag(store: store)
+    }
+
     private static func startedInTempo(at point: NSPoint) -> Bool {
         NSApp.windows.contains { window in
             window.isVisible && window.alphaValue > 0.5 && window.frame.contains(point)
+                && !window.className.contains("StatusBarWindow")
         }
     }
 
@@ -432,6 +449,9 @@ enum StatusItemDropper {
         drop.autoresizingMask = [.width, .height]
         drop.forwardClicksTo = button
         drop.accepts = { ConfigStore.shared?.config.features.shelf ?? true }
+        drop.onTargeted = { entered in
+            if entered { DragWatcher.shared.adoptDrag() }
+        }
         drop.onDrop = { urls in
             guard let store = ConfigStore.shared, store.config.features.shelf else { return }
             store.addToShelf(urls)
