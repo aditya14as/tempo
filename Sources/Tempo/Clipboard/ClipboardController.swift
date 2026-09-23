@@ -405,8 +405,25 @@ final class ClipboardController: ObservableObject {
         PanelRequest.openSettings()
         dismiss {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                MainActor.assumeIsolated { ClipboardController.statusButton()?.performClick(nil) }
+                MainActor.assumeIsolated { ClipboardController.clickStatusItem() }
             }
+        }
+    }
+
+    /// SwiftUI's menu bar item opens on the button's mouse-down, not its
+    /// action, so `performClick` does nothing. Queue a click on Tempo's own
+    /// event queue instead: it goes only to Tempo's icon and never moves the
+    /// real pointer or reaches another app.
+    private static func clickStatusItem() {
+        guard let button = statusButton(), let window = button.window else { return }
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        let time = ProcessInfo.processInfo.systemUptime
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: time,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            ) else { return }
+            NSApp.postEvent(event, atStart: false)
         }
     }
 

@@ -11,7 +11,6 @@ struct ClipboardSettingsSection: View {
     @ViewState private var pattern = ""
     @ViewState private var confirmClear = false
 
-    private static let sizes = [50, 100, 200, 500, 1000]
 
     private var config: ClipboardConfig { store.config.clipboard }
     private var theme: Theme { store.config.theme }
@@ -27,10 +26,15 @@ struct ClipboardSettingsSection: View {
                 }
                 caption("Opens the history popup from anywhere. Type to search, ↩ to pick.")
                 row("Keep") {
-                    Picker("", selection: $store.config.clipboard.historySize) {
-                        ForEach(sizeChoices, id: \.self) { Text("\($0) items").tag($0) }
+                    Spacer()
+                    Stepper(value: $store.config.clipboard.historySize,
+                            in: ClipboardConfig.historySizeRange, step: 10) {
+                        Text("\(config.historySize) items")
+                            .font(.system(.subheadline, design: .rounded).monospacedDigit())
                     }
+                    .controlSize(.small)
                 }
+                caption("Older entries fall off past this. Pinned ones don't count and always stay.")
                 row("Search") {
                     Picker("", selection: $store.config.clipboard.searchMode) {
                         ForEach(ClipSearchMode.allCases) { Text($0.label).tag($0) }
@@ -65,11 +69,6 @@ struct ClipboardSettingsSection: View {
                 maccyRows
             }
         }
-    }
-
-    /// The preset sizes, plus whatever odd value an older config holds.
-    private var sizeChoices: [Int] {
-        Self.sizes.contains(config.historySize) ? Self.sizes : (Self.sizes + [config.historySize]).sorted()
     }
 
     @ViewBuilder

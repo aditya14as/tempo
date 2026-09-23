@@ -108,12 +108,14 @@ struct ClipboardPopupView: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
+                    let lastPin = ClipText.lastPinnedBeforeRest(controller.results)
                     LazyVStack(spacing: 1) {
                         ForEach(controller.results) { item in
                             ClipRow(controller: controller, item: item, theme: theme,
                                     selected: item.id == controller.selectedID,
                                     hint: controller.hints[item.id])
                                 .id(item.id)
+                            if item.id == lastPin { PinnedDivider() }
                         }
                     }
                     .padding(6)
@@ -870,10 +872,12 @@ struct ClipboardTab: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 18)
                 } else {
+                    let lastPin = ClipText.lastPinnedBeforeRest(items)
                     ForEach(items) { item in
                         TabRow(item: item, theme: theme, copied: copiedID == item.id) { plain in
                             copy(item, plain: plain)
                         }
+                        if item.id == lastPin { PinnedDivider() }
                     }
                 }
             }
@@ -995,5 +999,26 @@ struct ClipboardTab: View {
                 Button("Delete") { ClipboardHistory.shared.delete(item.id) }
             }
         }
+    }
+}
+
+/// A hairline between the pinned entries on top and the rest of the history.
+struct PinnedDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(height: 1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+    }
+}
+
+extension ClipText {
+    /// The last entry of a pinned run at the top of the list, when unpinned
+    /// entries follow it — where the divider goes. Nil when there's nothing
+    /// to separate (no pins, only pins, or pins aren't kept on top).
+    static func lastPinnedBeforeRest(_ items: [ClipItem]) -> UUID? {
+        guard let split = items.firstIndex(where: { !$0.isPinned }), split > 0 else { return nil }
+        return items[split - 1].id
     }
 }

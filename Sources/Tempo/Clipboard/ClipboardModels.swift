@@ -84,8 +84,8 @@ struct ClipboardConfig: Codable, Equatable {
     var enabled = true
     /// Opens the history popup. Default ⇧⌘C, like Maccy.
     var shortcut: KeyCombo? = KeyCombo(keyCode: 8, modifiers: [.command, .shift])
-    /// Unpinned entries kept; older ones fall off.
-    var historySize = 200
+    /// Unpinned entries kept; older ones fall off. Pinned ones don't count.
+    var historySize = ClipboardConfig.defaultHistorySize
     var searchMode: ClipSearchMode = .exact
     var sort: ClipSort = .lastCopied
     var position: ClipPopupPosition = .cursor
@@ -108,6 +108,9 @@ struct ClipboardConfig: Codable, Equatable {
     var ignoredPatterns: [String] = []
     var clearOnQuit = false
 
+    static let defaultHistorySize = 150
+    static let historySizeRange = 10...2000
+
     static let defaultIgnoredApps: [AppRef] = [
         AppRef(bundleID: "com.1password.1password", name: "1Password"),
         AppRef(bundleID: "com.agilebits.onepassword7", name: "1Password 7"),
@@ -122,6 +125,8 @@ struct ClipboardConfig: Codable, Equatable {
         case enabled, shortcut, historySize, searchMode, sort, position, pasteOnSelect, plainTextPaste
         case pinsOnTop, saveImages, saveFiles, saveRichText, paused, ignoredApps, ignoredTypes
         case ignoredPatterns, clearOnQuit
+        /// Marks configs saved since the default dropped from 200 to 150.
+        case historySizeV2
     }
 
     init(from decoder: Decoder) throws {
@@ -131,6 +136,10 @@ struct ClipboardConfig: Codable, Equatable {
         // A cleared shortcut is saved as null and must stay cleared.
         shortcut = c.contains(.shortcut) ? c.value(.shortcut, or: nil) : d.shortcut
         historySize = c.value(.historySize, or: d.historySize)
+        // Saved before the default became 150: 200 was the old default, not
+        // a choice, so it moves to the new one (once).
+        if !c.contains(.historySizeV2) && historySize == 200 { historySize = d.historySize }
+        historySize = min(max(historySize, Self.historySizeRange.lowerBound), Self.historySizeRange.upperBound)
         searchMode = c.value(.searchMode, or: d.searchMode)
         sort = c.value(.sort, or: d.sort)
         position = c.value(.position, or: d.position)
@@ -152,6 +161,7 @@ struct ClipboardConfig: Codable, Equatable {
         try c.encode(enabled, forKey: .enabled)
         try c.encode(shortcut, forKey: .shortcut)  // null when cleared, not omitted
         try c.encode(historySize, forKey: .historySize)
+        try c.encode(true, forKey: .historySizeV2)
         try c.encode(searchMode, forKey: .searchMode)
         try c.encode(sort, forKey: .sort)
         try c.encode(position, forKey: .position)

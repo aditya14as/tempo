@@ -218,8 +218,9 @@ Pasting needs **Accessibility**, the same switch the window switcher uses.
 Without it, picking an entry just copies it and you press ⌘V yourself.
 Copies from password managers (1Password, Bitwarden, Keychain Access,
 Passwords) and anything an app marks as concealed or temporary are never
-recorded. Settings → **Clipboard** changes the shortcut, how many entries to
-keep, which kinds to save, and which apps or text patterns to skip, and can
+recorded. Tempo keeps the latest **150** entries (pinned ones don't count and
+never fall off). Settings → **Clipboard** changes the shortcut, how many entries
+to keep (10–2000), which kinds to save, and which apps or text patterns to skip, and can
 pause recording. The history is kept only on your Mac, in
 `~/Library/Application Support/Tempo/Clipboard`.
 

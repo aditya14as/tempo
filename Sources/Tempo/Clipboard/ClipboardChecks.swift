@@ -212,6 +212,31 @@ enum ClipboardChecks {
             && partialConfig?.clipboard.searchMode == .exact,
             "missing clipboard keys fall back to defaults")
 
+        func size(_ json: String) -> Int? {
+            (try? JSONDecoder().decode(AppConfig.self, from: Data(json.utf8)))?.clipboard.historySize
+        }
+        Checks.expect(ClipboardConfig().historySize == 150, "the history keeps 150 entries by default")
+        Checks.expect(size(#"{"clipboard":{"historySize":200}}"#) == 150,
+            "the old 200 default moves to 150")
+        Checks.expect(size(#"{"clipboard":{"historySize":200,"historySizeV2":true}}"#) == 200,
+            "200 chosen after the change stays 200")
+        Checks.expect(size(#"{"clipboard":{"historySize":1}}"#) == 10
+            && size(#"{"clipboard":{"historySize":99999}}"#) == 2000,
+            "the history size stays within 10…2000")
+        var roundTrip = ClipboardConfig()
+        roundTrip.historySize = 200
+        let reloaded = (try? JSONEncoder().encode(roundTrip)).flatMap { try? JSONDecoder().decode(ClipboardConfig.self, from: $0) }
+        Checks.expect(reloaded?.historySize == 200, "a chosen size survives save and load")
+
+        var pinnedA = ClipItem(); pinnedA.pin = "b"
+        var pinnedB = ClipItem(); pinnedB.pin = "e"
+        let loose = ClipItem()
+        Checks.expect(ClipText.lastPinnedBeforeRest([pinnedA, pinnedB, loose]) == pinnedB.id,
+            "the divider goes after the last pinned entry")
+        Checks.expect(ClipText.lastPinnedBeforeRest([loose, pinnedA]) == nil
+            && ClipText.lastPinnedBeforeRest([pinnedA, pinnedB]) == nil,
+            "no divider without pins on top, or with nothing under them")
+
         var cleared = ClipboardConfig()
         cleared.shortcut = nil
         cleared.searchMode = .fuzzy

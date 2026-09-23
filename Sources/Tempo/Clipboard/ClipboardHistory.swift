@@ -82,6 +82,9 @@ final class ClipboardHistory: ObservableObject {
                 DispatchQueue.main.async { MainActor.assumeIsolated { ClipboardHistory.shared.apply(config) } }
             }
         apply(store.config.clipboard)
+        // A limit lowered since last run (or the old 200 default becoming
+        // 150) applies right away, not only at the next copy.
+        trim()
         watchMaccy()
         // Images saved before text was read out of them: newest first, one
         // at a time, after launch has settled.
