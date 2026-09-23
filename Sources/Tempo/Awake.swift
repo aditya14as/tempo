@@ -194,7 +194,6 @@ final class AwakeEngine: ObservableObject {
     func start(store: ConfigStore) {
         guard self.store == nil else { return }
         self.store = store
-        AwakeNotifier.prepare()
         ClosedLid.shared.recoverAtLaunch()
         refreshEnvironment()
 
@@ -253,6 +252,8 @@ final class AwakeEngine: ObservableObject {
         lastEndReason = nil
         warnedFor = nil
         store.config.awake.session = AwakeSession(kind: kind, allowDisplaySleep: store.config.awake.allowDisplaySleep)
+        // Ask for notifications the first time a session could send one.
+        if store.config.awake.notifyOnEnd || store.config.awake.warnBeforeEndMinutes > 0 { AwakeNotifier.prepare() }
         if store.config.awake.sounds { NSSound(named: "Tink")?.play() }
         refresh()
     }

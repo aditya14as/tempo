@@ -5,7 +5,7 @@ import SwiftUI
 struct SwitcherSettingsSection: View {
     @EnvironmentObject var store: ConfigStore
     @ObservedObject private var controller = SwitcherController.shared
-    @ViewState private var screenRecording = Permissions.screenRecordingGranted
+    @ObservedObject private var permissions = PermissionCenter.shared
 
     private var config: SwitcherConfig { store.config.switcher }
     private var theme: Theme { store.config.theme }
@@ -61,7 +61,7 @@ struct SwitcherSettingsSection: View {
                 hiddenApps
             }
         }
-        .onAppear { screenRecording = Permissions.screenRecordingGranted }
+        .onAppear { permissions.watch() }
     }
 
     @ViewBuilder
@@ -74,7 +74,11 @@ struct SwitcherSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            SwitcherPermissionCard(dismissible: false)
+            PermissionRow(
+                icon: "hand.raised.fill", name: "Accessibility",
+                purpose: "Needed to catch \(config.modifier.symbol)⇥ and bring windows forward.",
+                status: .needed, theme: theme
+            ) { Permissions.askAccessibility() }
         }
     }
 
@@ -82,15 +86,13 @@ struct SwitcherSettingsSection: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 toggle("Live previews", $store.config.switcher.previews)
-                if config.previews && !screenRecording {
-                    Button("Allow") {
-                        if !Permissions.requestScreenRecording() { Permissions.openScreenRecordingSettings() }
-                    }
+                if config.previews && !permissions.screenRecording {
+                    Button("Allow") { Permissions.askScreenRecording() }
                     .controlSize(.small)
                 }
             }
-            if config.previews && !screenRecording {
-                caption("Previews need Screen Recording; until then cards show app icons. Relaunch Tempo after allowing.")
+            if config.previews && !permissions.screenRecording {
+                caption("Previews need Screen Recording; until then cards show app icons.")
             }
         }
     }
@@ -138,68 +140,5 @@ struct SwitcherSettingsSection: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-/// "Allow Accessibility" — the one step the switcher needs. Shown on the Now
-/// tab until granted (or dismissed) and inside the switcher settings.
-struct SwitcherPermissionCard: View {
-    @EnvironmentObject var store: ConfigStore
-    @ObservedObject private var controller = SwitcherController.shared
-    var dismissible = true
-
-    var body: some View {
-        if !controller.accessibilityGranted && store.config.switcher.enabled
-            && !(dismissible && store.config.switcher.onboardingDismissed) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "rectangle.stack.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(store.config.theme.gradient)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Turn on the \(store.config.switcher.modifier.symbol)⇥ window switcher")
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    Text("Allow Tempo under Accessibility so it can switch windows. It works the moment you flip the switch.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button {
-                        Permissions.requestAccessibility()
-                        Permissions.openAccessibilitySettings()
-                    } label: {
-                        Text("Open Settings")
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(store.config.theme.gradient))
-                            .foregroundStyle(.white)
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    Text(Permissions.staleGrantHint)
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-                if dismissible {
-                    Button {
-                        store.config.switcher.onboardingDismissed = true
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Hide — you can turn it on later in Settings")
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.orange.opacity(0.09))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
-            )
-        }
     }
 }

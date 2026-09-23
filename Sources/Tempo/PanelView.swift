@@ -61,7 +61,7 @@ struct PanelView: View {
             VStack(alignment: .leading, spacing: 14) {
                 header(now: now)
                 if tabs.count > 1 { tabBar(tabs, current: current) }
-                if current == tabs.first { SwitcherPermissionCard() }
+                if current == tabs.first { SetupCard() }
                 switch current {
                 case nil:
                     NoTabsCard { withAnimation(.easeInOut(duration: 0.2)) { showSettings = true } }

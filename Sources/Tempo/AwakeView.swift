@@ -325,8 +325,7 @@ struct AwakeTab: View {
                     }
                     if !SwitcherController.shared.accessibilityGranted {
                         hint("Needs Accessibility to move the pointer.", action: "Allow") {
-                            Permissions.requestAccessibility()
-                            Permissions.openAccessibilitySettings()
+                            Permissions.askAccessibility()
                         }
                     } else {
                         note("A one-pixel nudge keeps Slack, Teams and Zoom from marking you away.")

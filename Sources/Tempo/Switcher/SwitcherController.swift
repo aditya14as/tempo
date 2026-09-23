@@ -6,10 +6,12 @@ import os
 
 /// The ⌥⇥ switcher's brain.
 ///
-/// Trigger: a Carbon hot key for hold+⇥ (and hold+` for "this app's windows"),
-/// which swallows the combo system-wide. Once a session is open, the Carbon
-/// keys are released and an event tap takes over: it swallows every key the
-/// switcher uses, watches for the hold key's release, and handles the mouse.
+/// Trigger: `SwitcherTrigger`, an event tap on its own thread that catches
+/// hold+⇥ (and hold+` for "this app's windows"). Before Accessibility is
+/// allowed a Carbon hot key stands in, so the shortcut can point the way to
+/// Settings. Once a session is open, a second event tap takes over: it
+/// swallows every key the switcher uses, watches for the hold key's release,
+/// and handles the mouse.
 /// A 30 ms poll of the real modifier state backs up the release in case an
 /// event is ever dropped — a missed release must never strand the panel.
 @MainActor
@@ -44,6 +46,8 @@ final class SwitcherController: ObservableObject {
     private var cache: [SwitchItem] = []
     private var sessionCount = 0
     private var warmPending = false
+    /// The trigger tap is catching the shortcut; the Carbon hot key isn't needed.
+    private var triggerRunning = false
     private let log = Logger(subsystem: "com.ivy.tempo", category: "switcher")
 
     private struct Session {
@@ -106,8 +110,16 @@ final class SwitcherController: ObservableObject {
 
     private func checkPermission() {
         let trusted = AXIsProcessTrusted()
-        if trusted != accessibilityGranted { accessibilityGranted = trusted }
+        if trusted != accessibilityGranted {
+            accessibilityGranted = trusted
+            registerHotKeys()
+        }
         guard trusted else { return }
+        if !triggerRunning, SwitcherTrigger.shared.start() {
+            triggerRunning = true
+            registerHotKeys()
+            log.notice("trigger tap running")
+        }
         RecencyTracker.shared.start()
         if tap == nil { createTap() }
         if cache.isEmpty { warmCache() }
@@ -140,6 +152,8 @@ final class SwitcherController: ObservableObject {
         self.config = config
         if session != nil, old.modifier != config.modifier || !config.enabled { cancel() }
         registerHotKeys()
+        SwitcherTrigger.shared.configure(enabled: config.enabled, modifier: config.modifier,
+                                         appWindowsKey: config.appWindowsKey)
         model.theme = store?.config.theme ?? .aurora
         if config.enabled, noNap == nil {
             noNap = ProcessInfo.processInfo.beginActivity(
@@ -178,17 +192,18 @@ final class SwitcherController: ObservableObject {
         unregisterHotKeys()
         restoreSystemShortcuts()
         guard config.enabled, session == nil else { return }
-        let mods: UInt32
-        switch config.modifier {
-        case .option: mods = UInt32(optionKey)
-        case .control: mods = UInt32(controlKey)
-        case .command: mods = UInt32(cmdKey)
-        }
         if config.modifier == .command {
             // Take ⌘⇥ (and ⌘` when used) away from the system while Tempo owns it.
             var ids: [Int32] = [1, 2]
             if config.appWindowsKey { ids.append(27) }
             for id in ids where PrivateAPIs.setSymbolicHotKey(id, enabled: false) { disabledSymbolicKeys.append(id) }
+        }
+        guard !triggerRunning else { return }
+        let mods: UInt32
+        switch config.modifier {
+        case .option: mods = UInt32(optionKey)
+        case .control: mods = UInt32(controlKey)
+        case .command: mods = UInt32(cmdKey)
         }
         var keys: [(UInt16, UInt32)] = [(Self.tabKey, 1)]
         if config.appWindowsKey { keys.append((Self.graveKey, 2)) }
@@ -210,6 +225,13 @@ final class SwitcherController: ObservableObject {
         disabledSymbolicKeys.removeAll()
     }
 
+    /// The trigger tap caught the shortcut.
+    func triggered(appOnly: Bool, latency: TimeInterval) {
+        log.notice("trigger appOnly=\(appOnly) reached main after \(Int(latency * 1000)) ms")
+        if session == nil { begin(appOnly: appOnly, stayOpen: false) }
+        SwitcherTrigger.shared.setActive(session != nil)
+    }
+
     private func hotKeyPressed(appOnly: Bool, latency: TimeInterval) {
         log.notice("hotkey appOnly=\(appOnly) delivered after \(Int(latency * 1000)) ms")
         if session != nil {
@@ -217,7 +239,7 @@ final class SwitcherController: ObservableObject {
             return
         }
         guard accessibilityGranted else {
-            Permissions.requestAccessibility()
+            Permissions.askAccessibility()
             return
         }
         begin(appOnly: appOnly, stayOpen: false)
@@ -231,6 +253,7 @@ final class SwitcherController: ObservableObject {
         guard tap != nil else { return }
         setTaps(enabled: true)
         unregisterHotKeys()
+        SwitcherTrigger.shared.setActive(true)
         sessionCount += 1
         let id = sessionCount
         session = Session(id: id, appOnly: appOnly, stayOpen: stayOpen, mouseAnchor: NSEvent.mouseLocation)
@@ -345,6 +368,7 @@ final class SwitcherController: ObservableObject {
         if !swallowMouseUp { setTaps(enabled: false) }
         panel?.orderOut(nil)
         model.hovered = nil
+        SwitcherTrigger.shared.setActive(false)
         registerHotKeys()
     }
 

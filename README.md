@@ -180,11 +180,12 @@ While the switcher is open:
 the pointer follows you to the window you open. Windows on other Spaces show
 their Space number, and minimized and hidden ones sit at the end.
 
-**First time:** allow Tempo in **System Settings → Privacy & Security →
-Accessibility**. The **Now** tab shows a card with a button that takes you
-there. The switcher starts working as soon as you flip the switch, with no
-relaunch. For live previews, also allow **Screen Recording** and relaunch
-Tempo. Without it, cards show app icons instead.
+**First time:** the **Now** tab shows a one-step setup card. Click **Allow
+Accessibility**: System Settings opens at the right page, and a small guide
+beside it says what to click (and has a Tempo icon to drag into the list if
+Tempo isn't there). The guide closes by itself once you flip the switch, and
+the switcher works right away. Live previews are optional: the card offers
+**Screen Recording** next, or **Use app icons** to skip it.
 
 If you used AltTab or Amphetamine before, quit them so they don't fight
 Tempo for ⌥⇥ or the power settings. Settings → **Switcher** changes the hold
@@ -201,6 +202,13 @@ Open settings with the **gear** icon in the panel.
   off hides its tab, settings, and menu bar pieces and stops it running. With
   work hours off, the menu bar shows a plain icon (or just the bolt while
   awake).
+
+- **Permissions** — only what the features you use need, each with its
+  reason and an **Allow** button. Tempo asks for nothing at launch:
+  Accessibility for the switcher and the pointer nudge, Screen Recording
+  (optional) for previews, Notifications once a task has a due time or an
+  Awake session can alert you, and Location or Reminders only the first time
+  you use a Wi-Fi rule or Apple Reminders.
 
 - **Schedule** — work start and end times, which days count as workdays, and
   **per-day hours** (e.g. Friday 10:00–17:00). Day, week, month, and year math

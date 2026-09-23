@@ -33,6 +33,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     FeaturesSection(highlight: highlightFeatures)
 
+                    section("Permissions") {
+                        PermissionsSection()
+                    }
+
                     if on(.workHours) || on(.tasks) || on(.awake) {
                     section("Work hours") {
                         HStack {

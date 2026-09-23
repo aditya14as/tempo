@@ -152,7 +152,7 @@ final class ReminderScheduler {
         let pending = DueFormat.pendingReminders(todos, now: now)
         let activeIDs = Set(todos.filter { !$0.done }.map { Self.idPrefix + $0.id.uuidString })
         let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+        let apply: @Sendable (Bool) -> Void = { granted in
             center.getPendingNotificationRequests { requests in
                 let ours = requests.map(\.identifier).filter { $0.hasPrefix(Self.idPrefix) }
                 center.removePendingNotificationRequests(withIdentifiers: ours)
@@ -180,6 +180,12 @@ final class ReminderScheduler {
                     center.removeDeliveredNotifications(withIdentifiers: stale)
                 }
             }
+        }
+        // Ask only once a task actually has a due time; until then just tidy up.
+        if pending.isEmpty {
+            center.getNotificationSettings { apply($0.authorizationStatus == .authorized) }
+        } else {
+            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in apply(granted) }
         }
     }
 }
