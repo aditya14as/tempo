@@ -116,7 +116,7 @@ struct PanelView: View {
         // Opening the panel pulls done-state back from the Reminders app
         // and clears "+" rows that were never filled in.
         .onAppear {
-            store.pruneBlankTodos()
+            store.tidyTodos()
             store.pullAppleReminderCompletions()
             // Keep the menu bar icon's drop zone alive even if the
             // status item was rebuilt (e.g. after a style change).
@@ -267,191 +267,6 @@ struct NoTabsCard: View {
     }
 }
 
-/// Up to 5 focus tasks with optional due-time reminders and file attachments.
-/// Files/links can be dropped here from Finder, VS Code, or a browser.
-struct TodoSection: View {
-    @EnvironmentObject var store: ConfigStore
-    var now: Date
-    @ViewState private var duePopover: UUID?
-    @ViewState private var dropTargeted = false
-
-    var body: some View {
-        let todos = store.config.todos
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Top 5")
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                Spacer()
-                if !todos.isEmpty {
-                    Text("\(todos.filter(\.done).count)/\(todos.count) done")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            ForEach(todos) { todo in
-                todoRow(todo)
-            }
-            if todos.count < AppConfig.maxTodos {
-                Button {
-                    // One empty row at a time — type in the one you have.
-                    guard !todos.contains(where: \.isBlank) else { return }
-                    store.config.todos.append(TodoItem(text: ""))
-                } label: {
-                    Label(dropTargeted ? "Drop to add" : "Add a task — for file drops, open the Shelf (tray icon below)",
-                          systemImage: dropTargeted ? "arrow.down.circle" : "plus")
-                        .font(.system(.caption, design: .rounded))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.primary.opacity(dropTargeted ? 0.09 : 0.045))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(
-                    dropTargeted ? AnyShapeStyle(store.config.theme.gradient) : AnyShapeStyle(Color.clear),
-                    lineWidth: 1.5
-                )
-        )
-        .dropDestination(for: URL.self) { urls, _ in
-            addDropped(urls)
-        } isTargeted: { targeted in
-            dropTargeted = targeted
-        }
-        // Switching tabs also clears never-filled rows.
-        .onDisappear { store.pruneBlankTodos() }
-    }
-
-    private func todoRow(_ todo: TodoItem) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                Button {
-                    update(todo.id) { $0.done.toggle() }
-                } label: {
-                    Image(systemName: todo.done ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(todo.done
-                            ? AnyShapeStyle(store.config.theme.gradient)
-                            : AnyShapeStyle(Color.secondary))
-                }
-                .buttonStyle(.plain)
-                TextField("What matters today?", text: textBinding(todo.id))
-                    .textFieldStyle(.plain)
-                    .font(.system(.subheadline, design: .rounded))
-                    .foregroundStyle(todo.done ? .secondary : .primary)
-                    // Enter on an empty row removes it.
-                    .onSubmit { store.pruneBlankTodos() }
-                Button {
-                    openDuePopover(todo)
-                } label: {
-                    Image(systemName: todo.dueDate == nil ? "clock" : "clock.fill")
-                        .foregroundStyle(todo.dueDate == nil ? AnyShapeStyle(Color.secondary) : AnyShapeStyle(store.config.theme.gradient))
-                }
-                .buttonStyle(.plain)
-                .help("Due time & reminder")
-                .popover(isPresented: popoverBinding(todo.id), arrowEdge: .bottom) {
-                    DuePopover(todoID: todo.id)
-                        .environmentObject(store)
-                }
-                Button {
-                    store.config.todos.removeAll { $0.id == todo.id }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.quaternary)
-                }
-                .buttonStyle(.plain)
-                .help("Remove")
-            }
-            if todo.dueDate != nil || todo.linkName != nil {
-                HStack(spacing: 6) {
-                    if let due = todo.dueDate {
-                        let overdue = DueFormat.isOverdue(due, now: now, done: todo.done)
-                        chip(
-                            icon: overdue ? "exclamationmark.circle" : "bell",
-                            text: (overdue ? "Overdue · " : "") + DueFormat.label(due, now: now),
-                            tint: overdue ? .red : .secondary
-                        )
-                    }
-                    if let name = todo.linkName {
-                        Button {
-                            if let url = todo.linkURL { NSWorkspace.shared.open(url) }
-                        } label: {
-                            chip(icon: "paperclip", text: name, tint: .secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .onDrag {
-                            if let link = todo.link, link.hasPrefix("/"),
-                                let provider = NSItemProvider(contentsOf: URL(fileURLWithPath: link)) {
-                                return provider
-                            }
-                            if let url = todo.linkURL { return NSItemProvider(object: url as NSURL) }
-                            return NSItemProvider()
-                        }
-                        .help(todo.link ?? "")
-                    }
-                }
-                .padding(.leading, 24)
-            }
-        }
-    }
-
-    private func chip(icon: String, text: String, tint: Color) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon).font(.system(size: 8))
-            Text(text).lineLimit(1)
-        }
-        .font(.system(.caption2, design: .rounded))
-        .foregroundStyle(tint)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(tint.opacity(0.12)))
-    }
-
-    /// Turns each dropped file/link into a task, up to the 5-task cap.
-    @discardableResult
-    private func addDropped(_ urls: [URL]) -> Bool {
-        let free = AppConfig.maxTodos - store.config.todos.count
-        guard free > 0, !urls.isEmpty else { return false }
-        store.config.todos.append(contentsOf: urls.prefix(free).map(TodoItem.fromDroppedURL))
-        return true
-    }
-
-    private func openDuePopover(_ todo: TodoItem) {
-        if todo.dueDate == nil {
-            // Seed with the next full hour so the picker starts somewhere sane.
-            let cal = Calendar.current
-            let nextHour = cal.date(bySetting: .minute, value: 0, of: now.addingTimeInterval(3600)) ?? now
-            update(todo.id) { $0.dueDate = nextHour }
-        }
-        duePopover = todo.id
-    }
-
-    private func popoverBinding(_ id: UUID) -> Binding<Bool> {
-        Binding {
-            duePopover == id
-        } set: { open in
-            if !open { duePopover = nil }
-        }
-    }
-
-    private func update(_ id: UUID, _ change: (inout TodoItem) -> Void) {
-        guard let index = store.config.todos.firstIndex(where: { $0.id == id }) else { return }
-        change(&store.config.todos[index])
-    }
-
-    private func textBinding(_ id: UUID) -> Binding<String> {
-        Binding {
-            store.config.todos.first(where: { $0.id == id })?.text ?? ""
-        } set: { text in
-            update(id) { $0.text = text }
-        }
-    }
-}
-
 /// Due picker: one-tap presets, a real calendar, a time stepper,
 /// and export to the Apple Reminders app.
 struct DuePopover: View {
@@ -583,6 +398,9 @@ struct WeekGlance: View {
     @EnvironmentObject var store: ConfigStore
     var now: Date
     @ViewState private var selectedDay: Date?
+    @ViewState private var agendaHeight: CGFloat = 0
+
+    private static let maxAgendaHeight: CGFloat = 260
 
     private var cal: Calendar { ProgressEngine.mondayCalendar }
 
@@ -648,6 +466,12 @@ struct WeekGlance: View {
                                     : AnyShapeStyle(store.config.theme.gradient))
                             .frame(width: 4, height: 4)
                     }
+                    if tasks.count > 3 {
+                        Text("+\(tasks.count - 3)")
+                            .font(.system(size: 7, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
                 }
             }
         }
@@ -673,8 +497,9 @@ struct WeekGlance: View {
 
     @ViewBuilder
     private var agenda: some View {
+        // Done tasks only clutter the overview; a selected day shows them all.
         let dated = selectedDay.map { DueFormat.tasks(store.config.todos, dueOn: $0, cal: cal) }
-            ?? DueFormat.agenda(store.config.todos)
+            ?? DueFormat.agenda(store.config.todos).filter { !$0.done }
         if let day = selectedDay {
             HStack {
                 Text(DueFormat.label(day, now: now, cal: cal).replacingOccurrences(of: " 00:00", with: ""))
@@ -691,12 +516,13 @@ struct WeekGlance: View {
         }
         if dated.isEmpty {
             Text(selectedDay == nil
-                ? "No dated tasks yet. Give a task a due time in the Tasks tab and it lands here."
+                ? "Nothing coming up. Give a task a due time in the Tasks tab and it lands here."
                 : "Nothing due this day.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 4)
         } else {
+            ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(dated) { task in
                     let due = task.dueDate ?? now
@@ -720,6 +546,10 @@ struct WeekGlance: View {
                 }
             }
             .padding(12)
+            .measuringHeight($agendaHeight)
+            }
+            .frame(height: min(max(agendaHeight, 1), Self.maxAgendaHeight))
+            .scrollIndicators(agendaHeight > Self.maxAgendaHeight ? .automatic : .never)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.primary.opacity(0.045))

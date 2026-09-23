@@ -143,6 +143,12 @@ struct SettingsView: View {
                         }
                     }
 
+                    if on(.tasks) {
+                        section("Tasks") {
+                            TasksSettingsSection()
+                        }
+                    }
+
                     if on(.switcher) {
                         section("Switcher") {
                             SwitcherSettingsSection()

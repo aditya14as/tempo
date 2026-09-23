@@ -123,7 +123,7 @@ enum Feature: String, CaseIterable, Identifiable {
     var blurb: String {
         switch self {
         case .workHours: return "Day, week, month and year progress in the menu bar"
-        case .tasks: return "Top 5 tasks with reminders, plus the week view"
+        case .tasks: return "A scrolling task list with reminders, plus the week view"
         case .awake: return "Keep your Mac from sleeping, like Amphetamine"
         case .switcher: return "Hold ⌥ and press ⇥ to switch windows, like AltTab"
         case .shelf: return "A floating drop zone for files you drag around"

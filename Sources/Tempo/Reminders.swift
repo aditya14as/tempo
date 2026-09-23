@@ -35,7 +35,7 @@ enum DueFormat {
     static func pendingReminders(_ todos: [TodoItem], now: Date) -> [TodoItem] {
         todos.filter { todo in
             guard !todo.done, let due = todo.dueDate, due > now else { return false }
-            return !todo.text.trimmingCharacters(in: .whitespaces).isEmpty
+            return !todo.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -243,8 +243,9 @@ enum AppleReminders {
         EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
     }
 
-    /// Adds the task to the default Reminders list; hands back a status line
-    /// and the new reminder's identifier so done-state can sync later.
+    /// Adds the task to the default Reminders list (or updates the reminder
+    /// it was already exported to); hands back a status line and the
+    /// reminder's identifier so done-state can sync later.
     static func add(_ todo: TodoItem, completion: @escaping @MainActor (String, String?) -> Void) {
         store.requestFullAccessToReminders { granted, _ in
             DispatchQueue.main.async {
@@ -252,19 +253,27 @@ enum AppleReminders {
                     completion("No access — allow Reminders in System Settings → Privacy", nil)
                     return
                 }
-                let reminder = EKReminder(eventStore: store)
-                let text = todo.text.trimmingCharacters(in: .whitespaces)
+                let existing = todo.reminderID.flatMap { store.calendarItem(withIdentifier: $0) as? EKReminder }
+                let reminder = existing ?? EKReminder(eventStore: store)
+                let text = todo.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 reminder.title = text.isEmpty ? "Task from Tempo" : text
-                reminder.calendar = store.defaultCalendarForNewReminders()
+                if existing == nil {
+                    reminder.calendar = store.defaultCalendarForNewReminders()
+                }
                 reminder.isCompleted = todo.done
+                reminder.alarms?.forEach { reminder.removeAlarm($0) }
+                reminder.dueDateComponents = todo.dueDate.map { DueFormat.triggerComponents($0) }
                 if let due = todo.dueDate {
-                    reminder.dueDateComponents = DueFormat.triggerComponents(due)
                     reminder.addAlarm(EKAlarm(absoluteDate: due))
                 }
-                if let link = todo.link { reminder.notes = link }
+                let notes = [todo.notes, todo.link]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                reminder.notes = notes.isEmpty ? nil : notes.joined(separator: "\n")
                 do {
                     try store.save(reminder, commit: true)
-                    completion("Added to Reminders ✓", reminder.calendarItemIdentifier)
+                    completion(existing == nil ? "Added to Reminders ✓" : "Updated in Reminders ✓",
+                               reminder.calendarItemIdentifier)
                 } catch {
                     completion("Couldn't save: \(error.localizedDescription)", nil)
                 }

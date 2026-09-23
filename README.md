@@ -14,7 +14,7 @@
 
 Tempo sits in your menu bar as a live figure like `T 87% · W 37%`: how far
 you are through **T**oday and the **W**eek. Click it for the full panel, with
-**Now / Tasks / Week / Awake / Clips** tabs, a five-item task list, a
+**Now / Tasks / Week / Awake / Clips** tabs, a scrolling task list, a
 floating **Shelf** for parking files and links between apps, and a searchable
 clipboard history.
 
@@ -62,9 +62,10 @@ Five tabs across the top:
 
 - **Now** — today, this week, this month, and this year, each shown as a
   percentage, bar, ring, or dot grid.
-- **Tasks** — your top five focus items for the day.
+- **Tasks** — your to-do list, grouped by when things are due.
 - **Week** — this week and next at a glance, with each task dotted on its due
-  day and an agenda list underneath.
+  day (**+n** when a day has more than three) and a scrolling agenda
+  underneath.
 - **Awake** — keep your Mac from sleeping. See below.
 - **Clips** — the latest things you copied: click one to copy it again, search
   them, pin or delete from the right-click menu, pause recording or skip the
@@ -76,14 +77,28 @@ opens settings; the **power button** quits Tempo.
 
 ### Tasks and due dates
 
-- Type a task and press Return. Keep up to five.
+- Type in the quick-add field at the top and press Return. Dates in the text
+  become the due time (`call Sam tomorrow 3pm`, `fri 9:30`, `in 2 hours`), and
+  a leading or trailing `!` flags the task. Flagged tasks sort first.
+- There's no cap; the list scrolls. Open tasks are grouped **Overdue / Today /
+  Upcoming / No date** (turn grouping off in Settings → Tasks).
+- Check a task off and it moves, after a second, to a collapsible
+  **Completed** section with a **Clear** button. Completed tasks clear
+  themselves after a week by default (a day, a month, or never in Settings).
+- Long titles wrap, and a task can carry an optional notes line.
+- Hover a task for **flag**, **due**, and **delete** buttons, or right-click it
+  for a menu. Drag rows to reorder. Deleted by mistake? Hit
+  **Undo**.
+- Drop files or links on the list to turn them into tasks, with an attachment
+  chip.
 - Click the **clock** button on a task to set a due date and time: one-tap
   presets (In 2h, Tonight, Tomorrow, Next Mon), a full calendar, and a time
   stepper.
 - Tempo sends a notification when a task is due, and the chip turns **red**
   once it's overdue.
 - From the clock popover you can also **Add to Apple Reminders** (it asks for
-  Reminders access the first time).
+  Reminders access the first time). Exporting the same task again updates its
+  reminder instead of adding a duplicate.
 
 ### The Shelf
 

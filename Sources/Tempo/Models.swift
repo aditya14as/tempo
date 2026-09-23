@@ -269,10 +269,17 @@ struct TodoItem: Codable, Equatable, Identifiable {
     var link: String? = nil
     /// Apple Reminders identifier once exported — lets done-state sync both ways.
     var reminderID: String? = nil
+    /// Flagged tasks sort first in their group (quick add: a leading/trailing "!").
+    var flagged: Bool = false
+    /// Extra detail shown under the title.
+    var notes: String? = nil
+    /// When it was checked off; drives the Completed section and auto-clear.
+    /// Stamped by `ConfigStore` whenever `done` flips, wherever it flipped.
+    var completedAt: Date? = nil
 
     /// An abandoned "+" row: nothing typed, nothing attached, no due time.
     var isBlank: Bool {
-        text.trimmingCharacters(in: .whitespaces).isEmpty && link == nil && dueDate == nil
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && link == nil && dueDate == nil
     }
 
     /// The attached file/URL as something openable, or nil.
@@ -295,6 +302,64 @@ struct TodoItem: Codable, Equatable, Identifiable {
             return TodoItem(text: url.lastPathComponent, link: url.path)
         }
         return TodoItem(text: url.absoluteString, link: url.absoluteString)
+    }
+}
+
+extension TodoItem {
+    /// Tolerant decoding: tasks saved before a field existed still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, or: UUID())
+        text = c.value(.text, or: "")
+        done = c.value(.done, or: false)
+        dueDate = c.value(.dueDate, or: nil)
+        link = c.value(.link, or: nil)
+        reminderID = c.value(.reminderID, or: nil)
+        flagged = c.value(.flagged, or: false)
+        notes = c.value(.notes, or: nil)
+        completedAt = c.value(.completedAt, or: nil)
+    }
+}
+
+/// How long checked-off tasks stay in the Completed section.
+enum TaskAutoClear: String, Codable, CaseIterable, Identifiable {
+    case never, oneDay, oneWeek, oneMonth
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .never: return "Never"
+        case .oneDay: return "After a day"
+        case .oneWeek: return "After a week"
+        case .oneMonth: return "After a month"
+        }
+    }
+    /// Seconds a done task is kept, nil = forever.
+    var keep: TimeInterval? {
+        switch self {
+        case .never: return nil
+        case .oneDay: return 86_400
+        case .oneWeek: return 7 * 86_400
+        case .oneMonth: return 30 * 86_400
+        }
+    }
+}
+
+struct TasksConfig: Codable, Equatable {
+    /// Open tasks split into Overdue / Today / Upcoming / No date.
+    var groupByDue = true
+    /// The Completed section is expanded.
+    var showCompleted = false
+    var autoClear: TaskAutoClear = .oneWeek
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = TasksConfig()
+        groupByDue = c.value(.groupByDue, or: d.groupByDue)
+        showCompleted = c.value(.showCompleted, or: d.showCompleted)
+        autoClear = c.value(.autoClear, or: d.autoClear)
     }
 }
 
@@ -361,8 +426,10 @@ struct AppConfig: Codable, Equatable {
     /// opaque background (1): more solid reads better over busy windows.
     var backgroundOpacity: Double = 0.35
     var launchAtLogin: Bool = false
-    /// Up to 5 focus tasks shown in the panel.
+    /// The Tasks tab's list (open and completed), in the user's order.
     var todos: [TodoItem] = []
+    /// How the Tasks tab groups, shows and clears tasks.
+    var tasks = TasksConfig()
     /// Files/links parked on the floating Shelf.
     var shelf: [ShelfItem] = []
     /// Keep-awake sessions and triggers (the Amphetamine side of Tempo).
@@ -375,7 +442,8 @@ struct AppConfig: Codable, Equatable {
     /// Which parts of Tempo are switched on (Settings → Features).
     var features = FeatureSet()
 
-    static let maxTodos = 5
+    /// A sanity cap, not a limit anyone should hit: the list scrolls.
+    static let maxTodos = 200
     static let maxShelf = 12
 
     init() {}
@@ -400,6 +468,7 @@ struct AppConfig: Codable, Equatable {
         backgroundOpacity = min(max(c.value(.backgroundOpacity, or: d.backgroundOpacity), 0), 1)
         launchAtLogin = (try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)) ?? d.launchAtLogin
         todos = (try? c.decodeIfPresent([TodoItem].self, forKey: .todos)) ?? d.todos
+        tasks = c.value(.tasks, or: d.tasks)
         shelf = (try? c.decodeIfPresent([ShelfItem].self, forKey: .shelf)) ?? d.shelf
         awake = c.value(.awake, or: d.awake)
         switcher = c.value(.switcher, or: d.switcher)

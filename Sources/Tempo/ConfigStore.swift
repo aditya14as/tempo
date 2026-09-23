@@ -11,6 +11,11 @@ final class ConfigStore: ObservableObject {
 
     @Published var config: AppConfig {
         didSet {
+            // Stamp first so save() and the reminder syncs see completedAt.
+            if config.todos != oldValue.todos {
+                let stamped = TaskLogic.stampingCompletions(config.todos, old: oldValue.todos, now: Date())
+                if stamped != config.todos { config.todos = stamped }
+            }
             save()
             if config.launchAtLogin != oldValue.launchAtLogin {
                 applyLaunchAtLogin(config.launchAtLogin)
@@ -45,7 +50,7 @@ final class ConfigStore: ObservableObject {
 
     /// Checking a task off in Tempo completes its Apple reminder (and back).
     private func pushDoneChangesToAppleReminders(oldTodos: [TodoItem]) {
-        let oldDone = Dictionary(uniqueKeysWithValues: oldTodos.map { ($0.id, $0.done) })
+        let oldDone = Dictionary(oldTodos.map { ($0.id, $0.done) }, uniquingKeysWith: { first, _ in first })
         for todo in config.todos {
             guard let reminderID = todo.reminderID, oldDone[todo.id] != todo.done else { continue }
             AppleReminders.setCompleted(reminderID, done: todo.done)
@@ -66,6 +71,18 @@ final class ConfigStore: ObservableObject {
     func pruneBlankTodos() {
         if config.todos.contains(where: \.isBlank) {
             config.todos.removeAll(where: \.isBlank)
+        }
+    }
+
+    /// Panel-open housekeeping: drops blank rows, stamps done tasks saved
+    /// before `completedAt` existed, and auto-clears old completed ones.
+    func tidyTodos() {
+        let now = Date()
+        var todos = config.todos.filter { !$0.isBlank }
+        todos = TaskLogic.stampingCompletions(todos, old: todos, now: now)
+        todos = TaskLogic.clearingExpired(todos, rule: config.tasks.autoClear, now: now)
+        if todos != config.todos {
+            config.todos = todos
         }
     }
 
