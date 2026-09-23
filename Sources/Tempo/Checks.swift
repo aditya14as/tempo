@@ -506,6 +506,7 @@ enum Checks {
             "a bare letter is not a usable shortcut; a bare function key is")
 
         AwakeChecks.run()
+        SwitcherChecks.run()
 
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1

@@ -82,3 +82,25 @@ struct BigPercent: View {
             .foregroundStyle(fraction == nil ? AnyShapeStyle(Color.secondary) : AnyShapeStyle(theme.gradient))
     }
 }
+
+/// A label on the left, a mini switch pinned to the right edge.
+struct SettingToggle: View {
+    var label: String
+    @Binding var isOn: Bool
+
+    init(_ label: String, isOn: Binding<Bool>) {
+        self.label = label
+        self._isOn = isOn
+    }
+
+    var body: some View {
+        HStack {
+            Text(label).font(.system(.subheadline, design: .rounded))
+            Spacer(minLength: 8)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+        }
+    }
+}

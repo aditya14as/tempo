@@ -313,19 +313,17 @@ struct AwakeTab: View {
                 get: { !store.config.awake.allowDisplaySleep },
                 set: { store.config.awake.allowDisplaySleep = !$0 }
             ))
-            HStack {
-                toggle("Allow screen saver", isOn: $store.config.awake.allowScreenSaver)
-                Spacer()
-                if awake.allowScreenSaver && !awake.allowDisplaySleep {
+            toggle("Allow screen saver", isOn: $store.config.awake.allowScreenSaver)
+                .disabled(awake.allowDisplaySleep)
+            if awake.allowScreenSaver && !awake.allowDisplaySleep {
+                subRow("Starts after") {
                     minutesStepper($store.config.awake.screenSaverMinutes, range: 1...120, suffix: "idle")
                 }
             }
-            .disabled(awake.allowDisplaySleep)
             if engine.env.hasBattery {
-                HStack {
-                    toggle("Stop on low battery", isOn: $store.config.awake.endOnLowBattery)
-                    Spacer()
-                    if awake.endOnLowBattery {
+                toggle("Stop on low battery", isOn: $store.config.awake.endOnLowBattery)
+                if awake.endOnLowBattery {
+                    subRow("Below") {
                         Stepper(value: $store.config.awake.lowBatteryPercent, in: 5...95, step: 5) {
                             Text("\(awake.lowBatteryPercent)%")
                                 .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -383,11 +381,18 @@ struct AwakeTab: View {
     }
 
     private func toggle(_ label: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(label).font(.system(.subheadline, design: .rounded))
+        SettingToggle(label, isOn: isOn)
+    }
+
+    private func subRow(_ label: String, @ViewBuilder content: () -> some View) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+            Spacer()
+            content()
         }
-        .toggleStyle(.switch)
-        .controlSize(.mini)
     }
 
     private func minutesStepper(_ value: Binding<Int>, range: ClosedRange<Int>, suffix: String) -> some View {
@@ -581,10 +586,6 @@ struct AwakeSettingsSection: View {
     }
 
     private func toggle(_ label: String, _ isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(label).font(.system(.subheadline, design: .rounded))
-        }
-        .toggleStyle(.switch)
-        .controlSize(.mini)
+        SettingToggle(label, isOn: isOn)
     }
 }

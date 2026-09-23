@@ -129,6 +129,10 @@ struct SettingsView: View {
                         }
                     }
 
+                    section("Switcher") {
+                        SwitcherSettingsSection()
+                    }
+
                     section("Awake") {
                         AwakeSettingsSection()
                     }

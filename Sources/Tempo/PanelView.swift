@@ -52,6 +52,7 @@ struct PanelView: View {
                 tabBar
                 switch tab {
                 case .now:
+                    SwitcherPermissionCard()
                     ForEach(Metric.allCases) { metric in
                         if config.row(metric).visible {
                             MetricRowView(

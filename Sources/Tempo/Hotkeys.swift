@@ -43,7 +43,7 @@ final class HotkeyCenter {
         token = combo.flatMap { register($0, action: action) }
     }
 
-    private static let signature: OSType = 0x544D5048  // 'TMPH'
+    nonisolated static let signature: OSType = 0x544D5048  // 'TMPH'
 
     private static func carbonModifiers(_ flags: NSEvent.ModifierFlags) -> UInt32 {
         var mods: UInt32 = 0
@@ -63,6 +63,8 @@ final class HotkeyCenter {
                 event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                 nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID
             )
+            // Other handlers (the switcher) share this target; leave theirs alone.
+            guard hotKeyID.signature == HotkeyCenter.signature else { return OSStatus(eventNotHandledErr) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { HotkeyCenter.shared.fire(hotKeyID.id) }
             }

@@ -5,6 +5,8 @@
 <p align="center">
   A tiny native macOS menu bar app that shows how far you are through your
   work day, week, month, and year — in a glassy, customizable drop-down panel.
+  It also keeps your Mac awake (like Amphetamine) and switches windows with
+  ⌥⇥ (like AltTab), so one app replaces three.
 </p>
 
 ---
@@ -54,13 +56,14 @@ starts with your Mac.
 
 ### The panel
 
-Three tabs across the top:
+Four tabs across the top:
 
 - **Now** — today, this week, this month, and this year, each shown as a
   percentage, bar, ring, or dot grid.
 - **Tasks** — your top five focus items for the day.
 - **Week** — this week and next at a glance, with each task dotted on its due
   day and an agenda list underneath.
+- **Awake** — keep your Mac from sleeping. See below.
 
 The **gear** opens settings; the **power button** quits Tempo.
 
@@ -113,6 +116,58 @@ still showing after you drop, press **Escape** to dismiss it.
 > **Tip:** the card sits directly under your cursor in the menu bar, so there's
 > nothing to aim at. Just let go.
 
+### Keep awake
+
+The **Awake** tab keeps your Mac from sleeping, the way Amphetamine does.
+
+- **One tap to start.** Pick 30m, 1h, 2h, or 4h, **Until 18:00** (today's work
+  end, from your schedule), **Forever**, **Custom** (for a duration or until a
+  time), or **While app** (stays awake until that app quits).
+- **While it runs,** a ring counts down the time left, **+15m** and **+1h** add
+  time, and **Stop** ends it. A bolt appears in the menu bar, with the time left.
+- **Options:** keep the screen on or let it sleep, allow the screen saver after
+  a few idle minutes, stop on low battery or when unplugged, and get a
+  notification when a session ends.
+- **Automatic:** stay awake by itself during work hours, with an external
+  display connected, while plugged in, or while chosen apps are open.
+- **Settings** add a global shortcut to start or stop, the length of the
+  **Keep awake** button, a warning before a session ends, and start-at-launch.
+
+A session survives quitting and relaunching Tempo. Closing the lid still puts
+the Mac to sleep, as it does with Amphetamine's defaults.
+
+### Window switcher
+
+Hold **⌥** and press **⇥** to see every open window as a live preview, then
+let go of ⌥ to jump to the one you picked. A quick ⌥⇥ flips between your last
+two windows without showing anything.
+
+While the switcher is open:
+
+| Key | Does |
+|---|---|
+| ⇥ or → | next window |
+| ⇧ or ← | previous window |
+| ↑ ↓ | move between rows |
+| ↩ or click | open the selected window |
+| W / M / H / Q | close window / minimize / hide app / quit app |
+| ⎋ | cancel |
+
+**⌥\`** cycles only the current app's windows. Hovering a card selects it, and
+the pointer follows you to the window you open. Windows on other Spaces show
+their Space number, and minimized and hidden ones sit at the end.
+
+**First time:** allow Tempo in **System Settings → Privacy & Security →
+Accessibility**. The **Now** tab shows a card with a button that takes you
+there. The switcher starts working as soon as you flip the switch, with no
+relaunch. For live previews, also allow **Screen Recording** and relaunch
+Tempo. Without it, cards show app icons instead.
+
+If you used AltTab or Amphetamine before, quit them so they don't fight
+Tempo for ⌥⇥ or the power settings. Settings → **Switcher** changes the hold
+key (⌥, ⌃, or ⌘), the style (previews, icons, or a list), the card size, which
+Spaces and screens it uses, and apps to never show.
+
 ## Customize
 
 Open settings with the **gear** icon in the panel.
@@ -133,6 +188,7 @@ Open settings with the **gear** icon in the panel.
 - **Menu bar item** — live percentage text, a plain icon, or a tiny filling
   ring, and which metric it tracks.
 - **Accent theme** — Aurora, Sunset, Ocean, or Mono.
+- **Switcher** and **Awake** — see the sections above.
 
 Everything saves automatically and survives restarts.
 
@@ -145,8 +201,11 @@ swift run Tempo                 # run the app directly (no bundle)
 ```
 
 Self-checks live in `Sources/Tempo/Checks.swift`. The Command Line Tools ship no
-XCTest, so tests are a `--check` flag on the binary; it covers the progress math
-and the Shelf's drop-card placement. To quit the app, click the menu bar item
+XCTest, so tests are a `--check` flag on the binary; it covers the progress math,
+the Shelf's drop-card placement, keep-awake planning, and the switcher's
+ordering, navigation, and layout. Rebuilding changes the ad-hoc signature, so
+after a hand rebuild run `tccutil reset Accessibility com.ivy.tempo` and allow
+Tempo again (`install.sh` does this for you). To quit the app, click the menu bar item
 and press the power button in the panel footer.
 
 Write `@ViewState` wherever you'd normally write `@State`. The macOS 27 SDK

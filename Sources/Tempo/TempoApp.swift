@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startFeatures(_ store: ConfigStore) {
         ShelfWindow.shared.prewarm(store: store)
         AwakeEngine.shared.start(store: store)
+        SwitcherController.shared.start(store: store)
     }
 }
 
