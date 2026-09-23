@@ -85,8 +85,16 @@ enum ChromiumWebCustomData {
 enum DropPayload {
     static let legacyPaths = NSPasteboard.PasteboardType("NSFilenamesPboardType")
     static let webCustomData = NSPasteboard.PasteboardType("org.chromium.web-custom-data")
+    /// A Shelf item's own link, riding along when it's dragged out.
+    static let shelfLink = NSPasteboard.PasteboardType("com.ivy.tempo.shelf-link")
 
     static func urls(from pb: NSPasteboard) -> [URL] {
+        // 0. A Shelf item dragged back in: its original link, not the
+        //    file copy the drag may carry.
+        if let link = pb.string(forType: shelfLink) ?? pb.data(forType: shelfLink).flatMap({ String(data: $0, encoding: .utf8) }),
+            let url = link.hasPrefix("/") ? URL(fileURLWithPath: link) : URL(string: link) {
+            return [url]
+        }
         // 1. Real URLs (Finder, Zed, modern apps).
         if let objects = pb.readObjects(forClasses: [NSURL.self]) as? [URL] {
             let urls = objects.filter {
@@ -281,7 +289,7 @@ final class FileDropView: NSView {
         // while the real path sits right there in the plain text.
         let urls = DropPayload.urls(from: pb)
         if !urls.isEmpty {
-            Self.log("drop@\(name) ok \(urls.count)", pasteboard: pb)
+            Self.log("drop@\(name) ok \(urls.map { $0.isFileURL ? $0.path : $0.absoluteString })", pasteboard: pb)
             onDrop?(urls)
             NSSound(named: "Pop")?.play()  // audible "got it!"
             return true

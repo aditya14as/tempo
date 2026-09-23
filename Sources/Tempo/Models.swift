@@ -394,7 +394,7 @@ struct ShelfItem: Codable, Equatable, Identifiable {
         var result = shelf
         for url in dropped.reversed() {
             let item = ShelfItem.fromDroppedURL(url)
-            if let index = result.firstIndex(where: { $0.link == item.link }) {
+            if let index = result.firstIndex(where: { sameTarget($0.link, item.link) }) {
                 let existing = result.remove(at: index)
                 result.insert(existing, at: 0)
             } else {
@@ -405,6 +405,17 @@ struct ShelfItem: Codable, Equatable, Identifiable {
             result.removeLast(result.count - cap)
         }
         return result
+    }
+
+    /// Two links point at the same thing: file paths compare after resolving
+    /// symlinks and "..", so /tmp/a and /private/tmp/a are one item.
+    static func sameTarget(_ a: String, _ b: String) -> Bool {
+        if a == b { return true }
+        guard a.hasPrefix("/"), b.hasPrefix("/") else { return false }
+        func key(_ path: String) -> String {
+            URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        }
+        return key(a) == key(b)
     }
 }
 

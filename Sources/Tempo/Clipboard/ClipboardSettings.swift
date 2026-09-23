@@ -27,12 +27,14 @@ struct ClipboardSettingsSection: View {
                 caption("Opens the history popup from anywhere. Type to search, ↩ to pick.")
                 row("Keep") {
                     Spacer()
-                    Stepper(value: $store.config.clipboard.historySize,
-                            in: ClipboardConfig.historySizeRange, step: 10) {
-                        Text("\(config.historySize) items")
-                            .font(.system(.subheadline, design: .rounded).monospacedDigit())
-                    }
-                    .controlSize(.small)
+                    // The value sits beside the stepper: the row hides
+                    // control labels, which swallowed it as the label.
+                    Text("\(config.historySize) items")
+                        .font(.system(.subheadline, design: .rounded).monospacedDigit())
+                    Stepper("Keep", value: $store.config.clipboard.historySize,
+                            in: ClipboardConfig.historySizeRange, step: 10)
+                        .labelsHidden()
+                        .controlSize(.small)
                 }
                 caption("Older entries fall off past this. Pinned ones don't count and always stay.")
                 row("Search") {

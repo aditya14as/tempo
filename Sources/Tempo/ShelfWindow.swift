@@ -532,13 +532,23 @@ struct ShelfView: View {
     }
 
     /// Hands the real file (not just its name) to whatever you drop it on.
+    /// Also tags the drag with the item's own link: the file itself can
+    /// arrive as a copy at another path, and dropping it back on the Shelf
+    /// (or the menu bar icon) must find the item already there, not add a twin.
     private func dragProvider(_ item: ShelfItem) -> NSItemProvider {
-        if item.isFile, let provider = NSItemProvider(contentsOf: URL(fileURLWithPath: item.link)) {
-            return provider
+        let provider: NSItemProvider
+        if item.isFile, let file = NSItemProvider(contentsOf: URL(fileURLWithPath: item.link)) {
+            provider = file
+        } else if let url = item.url {
+            provider = NSItemProvider(object: url as NSURL)
+        } else {
+            provider = NSItemProvider(object: item.link as NSString)
         }
-        if let url = item.url {
-            return NSItemProvider(object: url as NSURL)
+        let link = item.link
+        provider.registerDataRepresentation(forTypeIdentifier: DropPayload.shelfLink.rawValue, visibility: .all) { done in
+            done(Data(link.utf8), nil)
+            return nil
         }
-        return NSItemProvider(object: item.link as NSString)
+        return provider
     }
 }

@@ -383,6 +383,20 @@ enum Checks {
                 .map(\.link) == ["/c", "/a"],
             "a full shelf drops its oldest item to fit a new one"
         )
+        expect(
+            ShelfItem.merged(shelf: [ShelfItem(link: "/tmp")], dropped: [URL(fileURLWithPath: "/private/tmp")])
+                .count == 1,
+            "the same file by a symlinked path is not added twice"
+        )
+        // A Shelf item dragged back in: its tag wins over the file copy the drag carries.
+        let shelfPB = NSPasteboard(name: NSPasteboard.Name("tempo.check.shelf-drag"))
+        shelfPB.clearContents()
+        shelfPB.declareTypes([.fileURL, DropPayload.shelfLink], owner: nil)
+        shelfPB.setString(URL(fileURLWithPath: "/var/folders/xx/T/copy/notes.md").absoluteString, forType: .fileURL)
+        shelfPB.setString("/Users/me/notes.md", forType: DropPayload.shelfLink)
+        expect(DropPayload.urls(from: shelfPB).map(\.path) == ["/Users/me/notes.md"],
+               "a Shelf item dropped back resolves to its original path")
+        shelfPB.releaseGlobally()
 
         // Builds the little-endian blob Chromium uses for drag data:
         // payload size, entry count, then UTF-16 key/value pairs padded
