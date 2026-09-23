@@ -203,9 +203,16 @@ struct SettingsView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
-            .frame(maxHeight: 460)
+            .frame(maxHeight: Self.maxScrollHeight)
         }
         .frame(width: 360)
+    }
+
+    /// Tall enough to show several sections at once, but always leaves room
+    /// under the menu bar on smaller screens.
+    private static var maxScrollHeight: CGFloat {
+        let screen = NSScreen.main?.visibleFrame.height ?? 800
+        return max(460, min(720, screen - 140))
     }
 
     private func on(_ feature: Feature) -> Bool { store.config.isOn(feature) }
