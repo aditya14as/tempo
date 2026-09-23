@@ -3,7 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-swift build -c release
+# The Command Line Tools have no XCTest, yet SwiftPM still passes the linker
+# search paths for it, so ld warns that they don't exist. -w quiets that.
+swift build -c release -Xlinker -w
 
 APP="dist/Tempo.app"
 rm -rf "$APP"
@@ -43,11 +45,13 @@ PLIST
 # them to one exact binary, and every rebuild would need re-allowing.
 IDENTITY="${TEMPO_SIGN_IDENTITY:-Tempo Local Signing}"
 if security find-identity -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
-    codesign --force -s "$IDENTITY" "$APP"
+    SIGN="$IDENTITY"
 else
     echo "note: no \"$IDENTITY\" certificate; signing ad-hoc (permissions reset on every rebuild)"
-    codesign --force -s - "$APP"
+    SIGN="-"
 fi
+# The linker already signed the binary ad-hoc; don't echo that it's replaced.
+codesign --force -s "$SIGN" "$APP" 2>&1 | sed '/replacing existing signature/d'
 
 echo ""
 echo "Built $APP"

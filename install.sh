@@ -22,7 +22,8 @@ git clone --depth 1 "$REPO" "$SRC"
 
 echo "==> Building (this takes a minute)…"
 cd "$SRC"
-if ! ./build.sh; then
+if ! ./build.sh >build.log 2>&1; then
+  cat build.log
   echo ""
   echo "Build failed. Make sure the Command Line Tools are up to date"
   echo "(System Settings -> General -> Software Update), then re-run this command."

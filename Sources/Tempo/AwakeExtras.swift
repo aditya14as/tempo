@@ -344,7 +344,7 @@ final class DriveKeeper: ObservableObject {
             let paths = Self.targets(config, mounted: Self.externalVolumes()).map(\.path)
             // Remembered before writing, so cleanup finds every file even if
             // the session ends while a slow drive is still answering.
-            DispatchQueue.main.sync { MainActor.assumeIsolated { _ = DriveKeeper.shared.touched.formUnion(paths) } }
+            DispatchQueue.main.sync { MainActor.assumeIsolated { DriveKeeper.shared.touched.formUnion(paths) } }
             defer { DispatchQueue.main.async { MainActor.assumeIsolated { DriveKeeper.shared.writing = false } } }
             for path in paths {
                 let url = URL(fileURLWithPath: path).appendingPathComponent(Self.fileName)
