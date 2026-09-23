@@ -38,7 +38,16 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-codesign --force -s - "$APP"
+# Sign with a stable local identity when there is one, so macOS keeps the
+# Accessibility / Screen Recording grants across rebuilds. Ad-hoc signing ties
+# them to one exact binary, and every rebuild would need re-allowing.
+IDENTITY="${TEMPO_SIGN_IDENTITY:-Tempo Local Signing}"
+if security find-identity -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
+    codesign --force -s "$IDENTITY" "$APP"
+else
+    echo "note: no \"$IDENTITY\" certificate; signing ad-hoc (permissions reset on every rebuild)"
+    codesign --force -s - "$APP"
+fi
 
 echo ""
 echo "Built $APP"

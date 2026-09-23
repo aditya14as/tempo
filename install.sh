@@ -36,11 +36,14 @@ echo "==> Installing to /Applications…"
 pkill -x Tempo 2>/dev/null || true   # quit a running copy so re-running upgrades it
 rm -rf /Applications/Tempo.app
 cp -R dist/Tempo.app /Applications/
-# The build is ad-hoc signed, so its code hash changes every time. macOS keeps
-# honouring the OLD hash in Privacy & Security, which silently breaks the
-# window switcher; clear the stale grants so Tempo asks again, cleanly.
-tccutil reset Accessibility com.ivy.tempo >/dev/null 2>&1 || true
-tccutil reset ScreenCapture com.ivy.tempo >/dev/null 2>&1 || true
+# An ad-hoc build's code hash changes every time, and macOS keeps honouring
+# the OLD hash in Privacy & Security, which silently breaks the window
+# switcher; clear the stale grants so Tempo asks again, cleanly. A build
+# signed with a stable certificate keeps its grants, so leave those alone.
+if codesign -dr - /Applications/Tempo.app 2>&1 | grep -q "cdhash"; then
+  tccutil reset Accessibility com.ivy.tempo >/dev/null 2>&1 || true
+  tccutil reset ScreenCapture com.ivy.tempo >/dev/null 2>&1 || true
+fi
 
 echo "==> Cleaning up…"
 cd /

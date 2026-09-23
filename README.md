@@ -233,9 +233,12 @@ swift run Tempo                 # run the app directly (no bundle)
 Self-checks live in `Sources/Tempo/Checks.swift`. The Command Line Tools ship no
 XCTest, so tests are a `--check` flag on the binary; it covers the progress math,
 the Shelf's drop-card placement, keep-awake planning, and the switcher's
-ordering, navigation, and layout. Rebuilding changes the ad-hoc signature, so
-after a hand rebuild run `tccutil reset Accessibility com.ivy.tempo` and allow
-Tempo again (`install.sh` does this for you). To quit the app, click the menu bar item
+ordering, navigation, and layout. `build.sh` signs with a "Tempo Local Signing"
+certificate from your login keychain when one exists (override with
+`TEMPO_SIGN_IDENTITY`), so Accessibility and Screen Recording survive rebuilds.
+Without it the build is signed ad-hoc: after a hand rebuild run
+`tccutil reset Accessibility com.ivy.tempo` and allow Tempo again
+(`install.sh` does this for you). To quit the app, click the menu bar item
 and press the power button in the panel footer.
 
 Write `@ViewState` wherever you'd normally write `@State`. The macOS 27 SDK

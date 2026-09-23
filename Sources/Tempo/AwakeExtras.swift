@@ -200,7 +200,7 @@ final class ClosedLid: ObservableObject {
 @MainActor
 final class DriveKeeper {
     static let shared = DriveKeeper()
-    static let fileName = ".tempo-drive-alive"
+    nonisolated static let fileName = ".tempo-drive-alive"
     static let interval: TimeInterval = 60
 
     private var lastWrite: Date = .distantPast

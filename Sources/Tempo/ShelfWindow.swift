@@ -247,7 +247,7 @@ final class ShelfWindow {
         drop.onDrop = { [weak store] urls in store?.addToShelf(urls) }
         drop.onTargeted = { ShelfWindow.shared.dragHover($0) }
         drop.onAnyDrop = { ShelfWindow.shared.noteDrop() }
-        let hosting = NSHostingView(rootView: ShelfView().environmentObject(store))
+        let hosting = ShelfHostingView(rootView: ShelfView().environmentObject(store))
         hosting.frame = drop.bounds
         hosting.autoresizingMask = [.width, .height]
         drop.addSubview(hosting)
@@ -318,6 +318,15 @@ final class ShelfWindow {
 /// to be. Overriding the constraint lets the card go where it's told.
 final class ShelfPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    /// Never take focus: the menu bar panel closes when it loses key, and a
+    /// click that only makes the card key never reaches its buttons.
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// Acts on the first click, even though the card is never key.
+private final class ShelfHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// Where the Shelf card pops for an in-flight drag. Pure geometry in Cocoa

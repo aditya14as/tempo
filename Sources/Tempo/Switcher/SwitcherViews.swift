@@ -31,6 +31,8 @@ enum SwitcherMetrics {
 final class SwitcherModel: ObservableObject {
     @Published var items: [SwitchItem] = []
     @Published var selected = 0
+    /// The last selection came from the pointer: don't scroll the grid under it.
+    var selectedByPointer = false
     @Published var hovered: Int?
     @Published var images: [CGWindowID: NSImage] = [:]
     @Published var style: SwitcherStyle = .thumbnails
@@ -44,6 +46,8 @@ final class SwitcherModel: ObservableObject {
     @Published var previewsOn = true
     /// Card frames in the hosting view's top-left coordinates, for mouse hit-tests.
     var cardFrames: [Int: CGRect] = [:]
+    /// The visible part of the scrolling grid; cards scrolled out of it can't be hit.
+    var viewport: CGRect?
     private var icons: [pid_t: NSImage] = [:]
 
     var selectedItem: SwitchItem? { items.indices.contains(selected) ? items[selected] : nil }
@@ -59,8 +63,14 @@ final class SwitcherModel: ObservableObject {
     func resetIcons() { icons.removeAll() }
 
     func index(at point: CGPoint) -> Int? {
-        cardFrames.first { $0.value.contains(point) }?.key
+        if let viewport = scrollHeight != nil ? viewport : nil, !viewport.contains(point) { return nil }
+        return cardFrames.first { $0.value.contains(point) }?.key
     }
+}
+
+private struct ViewportKey: PreferenceKey {
+    static let defaultValue: CGRect? = nil
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) { value = nextValue() ?? value }
 }
 
 private struct CardFramesKey: PreferenceKey {
@@ -113,6 +123,9 @@ struct SwitcherView: View {
         .onPreferenceChange(CardFramesKey.self) { frames in
             MainActor.assumeIsolated { model.cardFrames = frames }
         }
+        .onPreferenceChange(ViewportKey.self) { frame in
+            MainActor.assumeIsolated { model.viewport = frame }
+        }
         .fixedSize()
     }
 
@@ -124,7 +137,11 @@ struct SwitcherView: View {
                     content
                 }
                 .frame(height: height)
+                .background(GeometryReader { geo in
+                    Color.clear.preference(key: ViewportKey.self, value: geo.frame(in: .named("switcher")))
+                })
                 .onChange(of: model.selected) { _, index in
+                    guard !model.selectedByPointer else { return }
                     withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(index, anchor: .center) }
                 }
                 .onAppear { proxy.scrollTo(model.selected, anchor: .center) }
@@ -217,7 +234,7 @@ private struct CardChrome: ViewModifier {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(selected ? AnyShapeStyle(theme.gradient) : AnyShapeStyle(Color.clear), lineWidth: 2.5)
             )
-            .animation(.spring(duration: 0.18), value: selected)
+            .animation(.easeOut(duration: 0.08), value: selected)
     }
 }
 

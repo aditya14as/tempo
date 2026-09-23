@@ -33,12 +33,20 @@ struct SwitchItem: Identifiable {
 /// apps over Accessibility is time-boxed: a hung app is skipped, never waited on.
 enum WindowScanner {
     private static let perAppTimeout: Float = 0.25
-    private static let scanBudget: TimeInterval = 0.2
+    /// Off the main thread, so a slow app can have a little longer.
+    private static let scanBudget: TimeInterval = 0.3
 
-    /// Windows of every regular app, filtered by the switcher settings.
-    /// `onlyPID` limits the scan to one app (the ⌥` mode).
+    /// Windows of every regular app, filtered by the switcher settings, plus
+    /// the frontmost app's focused window. `onlyPID` limits the scan to one
+    /// app (the ⌥` mode). The Accessibility calls run off the main thread —
+    /// an app that's been idle can take a while to answer — and `completion`
+    /// gets the result on the main thread, with the apps that didn't answer
+    /// in time in `late`.
     @MainActor
-    static func scan(config: SwitcherConfig, onlyPID: pid_t? = nil) -> [SwitchItem] {
+    static func scan(
+        config: SwitcherConfig, onlyPID: pid_t? = nil,
+        completion: @escaping @MainActor (_ result: ScanResult) -> Void
+    ) {
         let hidden = Set(config.hiddenApps.map(\.bundleID))
         let apps = NSWorkspace.shared.runningApplications.filter { app in
             app.activationPolicy == .regular
@@ -49,7 +57,22 @@ enum WindowScanner {
         }
         let infos = apps.map { AppInfo(pid: $0.processIdentifier, name: $0.localizedName ?? "App",
                                        bundleID: $0.bundleIdentifier, hidden: $0.isHidden) }
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        DispatchQueue.global(qos: .userInteractive).async {
+            let focused = frontPID.map { focusedWindowID(pid: $0) } ?? 0
+            var result = collect(infos, config: config, onlyPID: onlyPID)
+            result.focused = focused
+            DispatchQueue.main.async { MainActor.assumeIsolated { completion(result) } }
+        }
+    }
 
+    struct ScanResult {
+        var items: [SwitchItem]
+        var late: Set<pid_t>
+        var focused: CGWindowID = 0
+    }
+
+    private static func collect(_ infos: [AppInfo], config: SwitcherConfig, onlyPID: pid_t?) -> ScanResult {
         // Scan apps in parallel; take whatever has arrived when the budget runs out.
         let box = ResultBox()
         let group = DispatchGroup()
@@ -94,7 +117,8 @@ enum WindowScanner {
                 ))
             }
         }
-        return items
+        let late = Set(infos.map(\.pid).filter { byPID[$0] == nil })
+        return ScanResult(items: items, late: late)
     }
 
     struct AppInfo: Sendable {
@@ -187,13 +211,6 @@ enum WindowScanner {
     }
 
     // MARK: - Current window
-
-    /// The focused window of the frontmost app, or 0.
-    @MainActor
-    static func focusedWindowID() -> CGWindowID {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return 0 }
-        return focusedWindowID(pid: app.processIdentifier)
-    }
 
     static func focusedWindowID(pid: pid_t) -> CGWindowID {
         let element = AXUIElementCreateApplication(pid)

@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Combine
 import SwiftUI
+import os
 
 /// The ⌥⇥ switcher's brain.
 ///
@@ -25,13 +26,29 @@ final class SwitcherController: ObservableObject {
     private var hotKeys: [EventHotKeyRef] = []
     private var carbonHandler: EventHandlerRef?
     private var tap: CFMachPort?
+    /// Listen-only tap for pointer moves, so hover never holds up the cursor.
+    private var moveTap: CFMachPort?
+    /// A click opened a window: keep eating events until its mouse-up, so the
+    /// release doesn't land on whatever sits under the pointer.
+    private var swallowMouseUp = false
     private var session: Session?
     private var pollTimer: Timer?
     private var permissionTimer: Timer?
     private var configObservation: AnyCancellable?
     private var disabledSymbolicKeys: [Int32] = []
+    /// Keeps App Nap away while the switcher is on: a napping menu-bar app
+    /// answers the first ⌥⇥ late, with its show timer coalesced.
+    private var noNap: NSObjectProtocol?
+    /// The last full scan. ⌥⇥ opens on it at once while a fresh scan runs:
+    /// an app that's been idle can take a moment to answer Accessibility.
+    private var cache: [SwitchItem] = []
+    private var sessionCount = 0
+    private var warmPending = false
+    private let log = Logger(subsystem: "com.ivy.tempo", category: "switcher")
 
     private struct Session {
+        var id: Int
+        var started = CACurrentMediaTime()
         var appOnly: Bool
         /// Opened from the menu: stays up until a click, ↩ or ⎋.
         var stayOpen: Bool
@@ -40,6 +57,18 @@ final class SwitcherController: ObservableObject {
         var mouseAnchor: CGPoint
         var hoverArmed = false
         var swallowedMouseDown = false
+        /// The card a mouse-down landed on; the click opens it on mouse-up.
+        var pressedIndex: Int?
+        /// A window list is in (cached or scanned), so the session can show or commit.
+        var loaded = false
+        /// The show delay ran out before anything was loaded.
+        var showDue = false
+        /// Released before anything was loaded: commit once the scan lands.
+        var commitOnLoad = false
+        /// The selection was moved by a key, hover, or click; a fresh scan keeps it.
+        var userMoved = false
+
+        var elapsedMS: Int { Int((CACurrentMediaTime() - started) * 1000) }
     }
 
     nonisolated static let signature: OSType = 0x5453_5754  // 'TSWT'
@@ -62,6 +91,9 @@ final class SwitcherController: ObservableObject {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { _ in MainActor.assumeIsolated { SwitcherController.shared.restoreSystemShortcuts() } }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { SwitcherController.shared.warmCache() } }
 
         // Accessibility can be granted at any moment; pick it up without a relaunch.
         checkPermission()
@@ -78,6 +110,29 @@ final class SwitcherController: ObservableObject {
         guard trusted else { return }
         RecencyTracker.shared.start()
         if tap == nil { createTap() }
+        if cache.isEmpty { warmCache() }
+    }
+
+    /// Refreshes the cached window list in the background after the user
+    /// switches apps, so the next ⌥⇥ opens on an up-to-date list.
+    private func warmCache() {
+        guard config.enabled, accessibilityGranted, !warmPending else { return }
+        warmPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            self.warmPending = false
+            guard self.session == nil else { return }
+            WindowScanner.scan(config: self.config) { [weak self] result in
+                guard let self else { return }
+                self.cache = self.merged(result)
+            }
+        }
+    }
+
+    /// A scan's windows, with the cached ones of apps that didn't answer in time.
+    private func merged(_ result: WindowScanner.ScanResult) -> [SwitchItem] {
+        guard !result.late.isEmpty else { return result.items }
+        return result.items + cache.filter { result.late.contains($0.pid) }
     }
 
     private func apply(_ config: SwitcherConfig) {
@@ -86,6 +141,15 @@ final class SwitcherController: ObservableObject {
         if session != nil, old.modifier != config.modifier || !config.enabled { cancel() }
         registerHotKeys()
         model.theme = store?.config.theme ?? .aurora
+        if config.enabled, noNap == nil {
+            noNap = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                reason: "Window switcher responds instantly to its shortcut"
+            )
+        } else if !config.enabled, let activity = noNap {
+            ProcessInfo.processInfo.endActivity(activity)
+            noNap = nil
+        }
     }
 
     /// Opens the switcher without holding a key (from the panel's footer).
@@ -104,7 +168,8 @@ final class SwitcherController: ObservableObject {
                               nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
             guard hotKeyID.signature == SwitcherController.signature else { return OSStatus(eventNotHandledErr) }
             let appOnly = hotKeyID.id == 2
-            MainActor.assumeIsolated { SwitcherController.shared.hotKeyPressed(appOnly: appOnly) }
+            let latency = GetCurrentEventTime() - GetEventTime(event)
+            MainActor.assumeIsolated { SwitcherController.shared.hotKeyPressed(appOnly: appOnly, latency: latency) }
             return noErr
         }, 1, &spec, nil, &carbonHandler)
     }
@@ -145,7 +210,8 @@ final class SwitcherController: ObservableObject {
         disabledSymbolicKeys.removeAll()
     }
 
-    private func hotKeyPressed(appOnly: Bool) {
+    private func hotKeyPressed(appOnly: Bool, latency: TimeInterval) {
+        log.notice("hotkey appOnly=\(appOnly) delivered after \(Int(latency * 1000)) ms")
         if session != nil {
             move(by: 1, isRepeat: false)
             return
@@ -162,18 +228,14 @@ final class SwitcherController: ObservableObject {
     private func begin(appOnly: Bool, stayOpen: Bool) {
         guard session == nil, let store else { return }
         if tap == nil { createTap() }
-        guard let tap else { return }
-        CGEvent.tapEnable(tap: tap, enable: true)
+        guard tap != nil else { return }
+        setTaps(enabled: true)
         unregisterHotKeys()
-        session = Session(appOnly: appOnly, stayOpen: stayOpen, mouseAnchor: NSEvent.mouseLocation)
+        sessionCount += 1
+        let id = sessionCount
+        session = Session(id: id, appOnly: appOnly, stayOpen: stayOpen, mouseAnchor: NSEvent.mouseLocation)
 
-        let front = NSWorkspace.shared.frontmostApplication
-        let onlyPID = appOnly ? front?.processIdentifier : nil
-        let current = WindowScanner.focusedWindowID()
-        if current != 0 { RecencyTracker.shared.note(current) }
-        let scanned = WindowScanner.scan(config: config, onlyPID: onlyPID)
-        let items = SwitcherLogic.order(scanned, wid: \.wid, bucket: \.bucket, mru: RecencyTracker.shared.order)
-
+        let onlyPID = appOnly ? NSWorkspace.shared.frontmostApplication?.processIdentifier : nil
         model.theme = store.config.theme
         model.style = config.style
         model.showHints = config.showKeyHints
@@ -181,26 +243,91 @@ final class SwitcherController: ObservableObject {
         model.previewsOn = config.previews && config.style == .thumbnails && PreviewStore.shared.available
         model.hovered = nil
         model.images = PreviewStore.shared.cache
-        model.items = items
-        model.selected = SwitcherLogic.initialSelection(
-            count: items.count, firstIsCurrent: current != 0 && items.first?.wid == current
-        )
+        model.items = []
+        model.selected = 0
+
+        // Open on the last scan straight away; the fresh one replaces it in a moment.
+        let cached = cache.filter { item in
+            (onlyPID == nil || item.pid == onlyPID)
+                && NSRunningApplication(processIdentifier: item.pid).map { !$0.isTerminated } == true
+        }
+        if !cached.isEmpty { load(cached, focused: RecencyTracker.shared.order.first ?? 0) }
+        log.notice("begin #\(id) appOnly=\(appOnly) cached=\(cached.count)")
+        WindowScanner.scan(config: config, onlyPID: onlyPID) { [weak self] result in
+            self?.scanned(result, session: id, full: onlyPID == nil)
+        }
 
         startPolling()
         // Show after a beat: a quick ⌥⇥ tap switches without ever flashing the panel.
         let delay: TimeInterval = stayOpen ? 0 : 0.1
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, var session = self.session, !session.shown else { return }
-            session.shown = true
-            session.mouseAnchor = NSEvent.mouseLocation
-            self.session = session
-            self.showPanel()
+            guard let self, var session = self.session, session.id == id, !session.shown else { return }
+            if session.loaded {
+                self.reveal()
+            } else {
+                session.showDue = true
+                self.session = session
+            }
         }
     }
 
-    private func commit() {
-        guard session != nil else { return }
+    private func scanned(_ result: WindowScanner.ScanResult, session id: Int, full: Bool) {
+        let items = merged(result)
+        if full { cache = items }
+        guard let session, session.id == id else { return }
+        log.notice("scan #\(id) in \(session.elapsedMS) ms: \(items.count) windows, \(result.late.count) apps late")
+        if result.focused != 0 { RecencyTracker.shared.note(result.focused) }
+        let before = model.items.map(\.id)
+        load(items, focused: result.focused)
+        guard let session = self.session else { return }
+        if session.commitOnLoad {
+            commit("release before scan")
+        } else if session.showDue && !session.shown {
+            reveal()
+        } else if session.shown && model.items.map(\.id) != before {
+            showPanel()
+        }
+    }
+
+    /// Puts `items` in the model in recency order. Until the user moves the
+    /// selection it starts on the previous window; after, it stays on theirs.
+    private func load(_ items: [SwitchItem], focused: CGWindowID) {
+        guard var session else { return }
+        let ordered = SwitcherLogic.order(items, wid: \.wid, bucket: \.bucket, mru: RecencyTracker.shared.order)
+        let keep = session.userMoved ? model.selectedItem?.id : nil
+        model.items = ordered
+        if let keep, let index = ordered.firstIndex(where: { $0.id == keep }) {
+            model.selected = index
+        } else {
+            model.selected = SwitcherLogic.initialSelection(
+                count: ordered.count, firstIsCurrent: focused != 0 && ordered.first?.wid == focused
+            )
+        }
+        session.loaded = true
+        self.session = session
+    }
+
+    private func reveal() {
+        guard var session else { return }
+        session.shown = true
+        session.mouseAnchor = NSEvent.mouseLocation
+        self.session = session
+        showPanel()
+        log.notice("shown #\(session.id) after \(session.elapsedMS) ms")
+    }
+
+    private func commit(_ reason: String) {
+        guard var session else { return }
+        guard session.loaded else {
+            // Released before any window list arrived: finish when the scan lands.
+            session.commitOnLoad = true
+            self.session = session
+            pollTimer?.invalidate()
+            pollTimer = nil
+            return
+        }
         let target = model.selectedItem
+        log.notice("commit #\(session.id) (\(reason, privacy: .public)) after \(session.elapsedMS) ms, shown=\(session.shown): \(target?.appName ?? "nothing", privacy: .public) at \(self.model.selected)")
         end()
         guard let target else { return }
         WindowScanner.focus(target, cursorFollows: config.cursorFollowsFocus)
@@ -215,7 +342,7 @@ final class SwitcherController: ObservableObject {
         session = nil
         pollTimer?.invalidate()
         pollTimer = nil
-        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+        if !swallowMouseUp { setTaps(enabled: false) }
         panel?.orderOut(nil)
         model.hovered = nil
         registerHotKeys()
@@ -233,7 +360,7 @@ final class SwitcherController: ObservableObject {
     /// Safety net for the release: the hardware state is the truth.
     private func pollModifiers() {
         guard let session, !session.stayOpen else { return }
-        if !NSEvent.modifierFlags.contains(config.modifier.flags) { commit() }
+        if !NSEvent.modifierFlags.contains(config.modifier.flags) { commit("release (poll)") }
     }
 
     private func move(by delta: Int, isRepeat: Bool) {
@@ -248,8 +375,10 @@ final class SwitcherController: ObservableObject {
 
     private func select(_ index: Int) {
         guard index != model.selected, model.items.indices.contains(index) else { return }
+        model.selectedByPointer = false
         model.selected = index
         model.hovered = nil
+        session?.userMoved = true
         // Keyboard moves re-arm the hover dead zone so a resting pointer can't steal it back.
         session?.mouseAnchor = NSEvent.mouseLocation
         session?.hoverArmed = false
@@ -261,14 +390,17 @@ final class SwitcherController: ObservableObject {
         action(item)
         let keepID = item.id
         let keepIndex = model.selected
+        guard let id = session?.id else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + settle) { [weak self] in
-            guard let self, let session = self.session else { return }
+            guard let self, let session = self.session, session.id == id else { return }
             let onlyPID = session.appOnly ? NSWorkspace.shared.frontmostApplication?.processIdentifier : nil
-            let scanned = WindowScanner.scan(config: self.config, onlyPID: onlyPID)
-            let items = SwitcherLogic.order(scanned, wid: \.wid, bucket: \.bucket, mru: RecencyTracker.shared.order)
-            self.model.items = items
-            self.model.selected = items.firstIndex { $0.id == keepID } ?? min(keepIndex, max(items.count - 1, 0))
-            if session.shown { self.showPanel() }
+            WindowScanner.scan(config: self.config, onlyPID: onlyPID) { [weak self] result in
+                guard let self, let session = self.session, session.id == id else { return }
+                let items = SwitcherLogic.order(result.items, wid: \.wid, bucket: \.bucket, mru: RecencyTracker.shared.order)
+                self.model.items = items
+                self.model.selected = items.firstIndex { $0.id == keepID } ?? min(keepIndex, max(items.count - 1, 0))
+                if session.shown { self.showPanel() }
+            }
         }
     }
 
@@ -358,10 +490,32 @@ final class SwitcherController: ObservableObject {
 
     // MARK: Event tap
 
+    private func setTaps(enabled: Bool) {
+        if let tap { CGEvent.tapEnable(tap: tap, enable: enabled) }
+        if let moveTap { CGEvent.tapEnable(tap: moveTap, enable: enabled) }
+    }
+
     private func createTap() {
-        let types: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .mouseMoved, .leftMouseDown, .leftMouseUp,
-                                    .leftMouseDragged]
+        let types: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .leftMouseUp]
         let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
+        if moveTap == nil {
+            let moves = (CGEventMask(1) << CGEventType.mouseMoved.rawValue)
+                | (CGEventMask(1) << CGEventType.leftMouseDragged.rawValue)
+            if let moveTap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .listenOnly,
+                eventsOfInterest: moves,
+                callback: { _, type, event, _ in
+                    MainActor.assumeIsolated { SwitcherController.shared.handleMove(type) }
+                    return Unmanaged.passUnretained(event)
+                },
+                userInfo: nil
+            ) {
+                let source = CFMachPortCreateRunLoopSource(nil, moveTap, 0)
+                CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+                CGEvent.tapEnable(tap: moveTap, enable: false)
+                self.moveTap = moveTap
+            }
+        }
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
             eventsOfInterest: mask,
@@ -377,18 +531,31 @@ final class SwitcherController: ObservableObject {
         self.tap = tap
     }
 
+    private func handleMove(_ type: CGEventType) {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let moveTap, session != nil { CGEvent.tapEnable(tap: moveTap, enable: true) }
+            return
+        }
+        handleHover()
+    }
+
     /// Returns true to swallow the event.
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap, session != nil { CGEvent.tapEnable(tap: tap, enable: true) }
+            if let tap, session != nil || swallowMouseUp { CGEvent.tapEnable(tap: tap, enable: true) }
             return false
+        }
+        if session == nil, swallowMouseUp {
+            guard type == .leftMouseUp else { return false }
+            finishClick()
+            return true
         }
         guard var session else { return false }
         switch type {
         case .flagsChanged:
             let flags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
             if !session.stayOpen && !flags.contains(config.modifier.flags) {
-                DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.commit() } }
+                DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.commit("release") } }
                 return false
             }
             let shift = flags.contains(.shift)
@@ -401,16 +568,18 @@ final class SwitcherController: ObservableObject {
             return true
         case .keyUp:
             return true
-        case .mouseMoved, .leftMouseDragged:
-            handleHover()
-            return false
         case .leftMouseDown:
             guard session.shown, let panel else { return false }
-            if let point = panelPoint(), let index = model.index(at: point) {
+            if let index = cardUnderPointer() {
+                // Show the press right away; open on release, like a button.
+                model.selectedByPointer = true
                 model.selected = index
+                model.hovered = nil
+                session.pressedIndex = index
                 session.swallowedMouseDown = true
+                session.userMoved = true
                 self.session = session
-                DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.commit() } }
+                swallowMouseUp = true
                 return true
             }
             if panel.frame.contains(NSEvent.mouseLocation) {
@@ -421,6 +590,16 @@ final class SwitcherController: ObservableObject {
             DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.cancel() } }
             return false
         case .leftMouseUp:
+            if let pressed = session.pressedIndex {
+                session.pressedIndex = nil
+                self.session = session
+                // Released off the card it was pressed on: treat as a cancelled click.
+                if cardUnderPointer() == pressed {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.commit("click") } }
+                }
+                finishClick()
+                return true
+            }
             return session.swallowedMouseDown
         default:
             return false
@@ -439,7 +618,7 @@ final class SwitcherController: ObservableObject {
         case kVK_DownArrow: moveRow(by: 1, isRepeat: isRepeat)
         case kVK_UpArrow: moveRow(by: -1, isRepeat: isRepeat)
         case kVK_Escape: cancel()
-        case kVK_Return, kVK_ANSI_KeypadEnter, kVK_Space: commit()
+        case kVK_Return, kVK_ANSI_KeypadEnter, kVK_Space: commit("return")
         case kVK_ANSI_W where !isRepeat: act(WindowScanner.close, settle: 0.3)
         case kVK_ANSI_M where !isRepeat: act(WindowScanner.toggleMinimize, settle: 0.4)
         case kVK_ANSI_H where !isRepeat: act({ WindowScanner.toggleHide($0) }, settle: 0.3)
@@ -448,22 +627,39 @@ final class SwitcherController: ObservableObject {
         }
     }
 
+    /// The click's mouse-up has been eaten; let the taps go if the session is over.
+    private func finishClick() {
+        swallowMouseUp = false
+        if session == nil { setTaps(enabled: false) }
+    }
+
     private func handleHover() {
-        guard var session, session.shown else { return }
+        guard var session, session.shown, session.pressedIndex == nil else { return }
         let mouse = NSEvent.mouseLocation
         if !session.hoverArmed {
+            // A small dead zone after opening or a key press, so a hand
+            // brushing the trackpad while typing doesn't steal the selection.
             let moved = hypot(mouse.x - session.mouseAnchor.x, mouse.y - session.mouseAnchor.y)
-            guard moved > 20 else { return }
+            guard moved > 6 else { return }
             session.hoverArmed = true
             self.session = session
         }
-        let index = panelPoint().flatMap { model.index(at: $0) }
-        if config.hoverSelects, let index {
-            if index != model.selected { model.selected = index }
+        let index = cardUnderPointer()
+        if config.hoverSelects {
+            if let index, index != model.selected {
+                model.selectedByPointer = true
+                model.selected = index
+                session.userMoved = true
+                self.session = session
+            }
             if model.hovered != nil { model.hovered = nil }
         } else if model.hovered != index {
             model.hovered = index
         }
+    }
+
+    private func cardUnderPointer() -> Int? {
+        panelPoint().flatMap { model.index(at: $0) }
     }
 
     /// The pointer in the hosting view's top-left coordinates.
