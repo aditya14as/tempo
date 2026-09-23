@@ -146,6 +146,8 @@ struct AwakeConfig: Codable, Equatable {
     var allowDisplaySleep = false
     /// Let the screen saver start while a session runs.
     var allowScreenSaver = false
+    /// Idle minutes before Tempo starts the screen saver itself.
+    var screenSaverMinutes = 5
     /// Safety: end the session when the battery drops this low.
     var endOnLowBattery = true
     var lowBatteryPercent = 15
@@ -170,7 +172,7 @@ struct AwakeConfig: Codable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case allowDisplaySleep, allowScreenSaver, endOnLowBattery, lowBatteryPercent, endWhenUnplugged
+        case allowDisplaySleep, allowScreenSaver, screenSaverMinutes, endOnLowBattery, lowBatteryPercent, endWhenUnplugged
         case notifyOnEnd, warnBeforeEndMinutes, sounds, startAtLaunch, defaultMinutes, presets
         case showTimeInMenuBar, toggleShortcut, triggers, session
     }
@@ -180,6 +182,7 @@ struct AwakeConfig: Codable, Equatable {
         let d = AwakeConfig()
         allowDisplaySleep = c.value(.allowDisplaySleep, or: d.allowDisplaySleep)
         allowScreenSaver = c.value(.allowScreenSaver, or: d.allowScreenSaver)
+        screenSaverMinutes = c.value(.screenSaverMinutes, or: d.screenSaverMinutes)
         endOnLowBattery = c.value(.endOnLowBattery, or: d.endOnLowBattery)
         lowBatteryPercent = c.value(.lowBatteryPercent, or: d.lowBatteryPercent)
         endWhenUnplugged = c.value(.endWhenUnplugged, or: d.endWhenUnplugged)

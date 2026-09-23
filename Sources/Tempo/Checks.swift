@@ -505,6 +505,8 @@ enum Checks {
         expect(!KeyCombo(keyCode: 0, modifiers: []).isUsable && KeyCombo(keyCode: 122, modifiers: []).isUsable,
             "a bare letter is not a usable shortcut; a bare function key is")
 
+        AwakeChecks.run()
+
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")
         return failures == 0 ? 0 : 1
     }

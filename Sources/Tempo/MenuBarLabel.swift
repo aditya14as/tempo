@@ -4,30 +4,114 @@ import SwiftUI
 struct MenuBarLabel: View {
     @ObservedObject var store: ConfigStore
     @ObservedObject var ticker: Ticker
+    @ObservedObject private var awake = AwakeEngine.shared
 
     var body: some View {
         let config = store.config
+        if let state = awake.state {
+            // Awake: a bolt (plus optional time left) leads the usual item.
+            Image(nsImage: MenuBarAwake.compose(
+                awakeText: awakeText(state, config: config),
+                base: baseImage(config),
+                text: baseText(config)
+            ))
+        } else if let image = baseImage(config) {
+            Image(nsImage: image)
+        } else {
+            Text(baseText(config) ?? "")
+                .monospacedDigit()
+        }
+    }
+
+    private func awakeText(_ state: AwakeState, config: AppConfig) -> String? {
+        guard config.awake.showTimeInMenuBar, let end = state.endsAt else { return nil }
+        return AwakePlanner.menuBarRemaining(end.timeIntervalSince(ticker.now))
+    }
+
+    /// The item as an image, or nil for the plain-text style.
+    private func baseImage(_ config: AppConfig) -> NSImage? {
         if config.menuBarShows == .todayWeek {
             // Today + week side by side: letter badge + percent + mini progress bar.
             let today = ProgressEngine.snapshot(.today, now: ticker.now, config: config)
             let week = ProgressEngine.snapshot(.week, now: ticker.now, config: config)
-            Image(nsImage: MenuBarBadges.image(segments: [
+            return MenuBarBadges.image(segments: [
                 ("T", today.fraction),
                 ("W", week.fraction),
-            ]))
-        } else {
-            let metric = config.menuBarShows.metric ?? .week
-            let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
-            switch config.menuBarStyle {
-            case .text:
-                Text("\(metric.shortLetter) \(ProgressEngine.percentText(snapshot.fraction))")
-                    .monospacedDigit()
-            case .icon:
-                Image(systemName: "circle.lefthalf.filled.inverse")
-            case .ring:
-                Image(nsImage: MenuBarRing.image(fraction: snapshot.fraction ?? 0, letter: metric.shortLetter))
-            }
+            ])
         }
+        let metric = config.menuBarShows.metric ?? .week
+        let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
+        switch config.menuBarStyle {
+        case .text:
+            return nil
+        case .icon:
+            let image = NSImage(systemSymbolName: "circle.lefthalf.filled.inverse", accessibilityDescription: "Tempo")
+            image?.isTemplate = true
+            return image
+        case .ring:
+            return MenuBarRing.image(fraction: snapshot.fraction ?? 0, letter: metric.shortLetter)
+        }
+    }
+
+    private func baseText(_ config: AppConfig) -> String? {
+        guard config.menuBarShows != .todayWeek, config.menuBarStyle == .text else { return nil }
+        let metric = config.menuBarShows.metric ?? .week
+        let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
+        return "\(metric.shortLetter) \(ProgressEngine.percentText(snapshot.fraction))"
+    }
+}
+
+enum MenuBarAwake {
+    /// Template image: bolt, optional time left, then the regular item
+    /// (an image, or text for the Live % style).
+    static func compose(awakeText: String?, base: NSImage?, text: String?) -> NSImage {
+        let height: CGFloat = 18
+        let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Keeping awake")?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
+        let boltSize = bolt?.size ?? NSSize(width: 8, height: 12)
+        let timeString = awakeText.map {
+            NSAttributedString(string: $0, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.black,
+            ])
+        }
+        let baseString = text.map {
+            NSAttributedString(string: $0, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                .foregroundColor: NSColor.black,
+            ])
+        }
+        let gap: CGFloat = 3
+        let sectionGap: CGFloat = 7
+        var width = boltSize.width
+        if let timeString { width += gap + timeString.size().width }
+        if let base { width += sectionGap + base.size.width }
+        if let baseString { width += sectionGap + baseString.size().width }
+
+        let image = NSImage(size: NSSize(width: ceil(width), height: height), flipped: false) { _ in
+            var x: CGFloat = 0
+            bolt?.draw(in: NSRect(x: x, y: (height - boltSize.height) / 2, width: boltSize.width, height: boltSize.height))
+            x += boltSize.width
+            if let timeString {
+                x += gap
+                let size = timeString.size()
+                timeString.draw(at: NSPoint(x: x, y: (height - size.height) / 2))
+                x += size.width
+            }
+            if let base {
+                x += sectionGap
+                base.draw(in: NSRect(x: x, y: (height - base.size.height) / 2, width: base.size.width, height: base.size.height))
+                x += base.size.width
+            }
+            if let baseString {
+                x += sectionGap
+                let size = baseString.size()
+                baseString.draw(at: NSPoint(x: x, y: (height - size.height) / 2))
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 }
 

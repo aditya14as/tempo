@@ -129,6 +129,10 @@ struct SettingsView: View {
                         }
                     }
 
+                    section("Awake") {
+                        AwakeSettingsSection()
+                    }
+
                     section("General") {
                         Toggle("Launch at login", isOn: $store.config.launchAtLogin)
                             .toggleStyle(.switch)

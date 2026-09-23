@@ -1,0 +1,441 @@
+import AppKit
+import Combine
+import IOKit.ps
+import IOKit.pwr_mgt
+@preconcurrency import UserNotifications
+
+// MARK: - Pure planning (covered by --check)
+
+/// What the machine looks like right now, as far as triggers care.
+struct AwakeEnvironment: Equatable {
+    var onAC = true
+    var hasBattery = false
+    var batteryPercent: Int? = nil
+    var externalDisplay = false
+    var runningBundleIDs: Set<String> = []
+}
+
+enum AwakePlanner {
+    /// A timed session's end, `minutes` from `now`.
+    static func end(afterMinutes minutes: Int, from now: Date) -> Date {
+        now.addingTimeInterval(TimeInterval(max(1, minutes)) * 60)
+    }
+
+    /// When today's work ends, if it hasn't already (drives the "Until 18:00" chip).
+    static func workEnd(on now: Date, schedule: WorkSchedule, cal: Calendar = .current) -> Date? {
+        let day = schedule.day(cal.component(.weekday, from: now))
+        guard day.enabled, day.seconds > 0 else { return nil }
+        let end = cal.date(bySettingHour: day.endMinute / 60, minute: day.endMinute % 60, second: 0,
+                           of: cal.startOfDay(for: now))
+        guard let end, end > now else { return nil }
+        return end
+    }
+
+    /// True while `now` falls inside one of today's work slots.
+    static func inWorkHours(_ now: Date, schedule: WorkSchedule, cal: Calendar = .current) -> Bool {
+        let day = schedule.day(cal.component(.weekday, from: now))
+        guard day.enabled else { return false }
+        let c = cal.dateComponents([.hour, .minute], from: now)
+        let minute = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+        return day.slots.contains { minute >= $0.startMinute && minute < $0.endMinute }
+    }
+
+    /// The first satisfied trigger, as a human reason ("External display"), or nil.
+    static func triggerReason(
+        _ triggers: AwakeTriggers, env: AwakeEnvironment, now: Date, schedule: WorkSchedule,
+        cal: Calendar = .current
+    ) -> String? {
+        guard triggers.enabled else { return nil }
+        if let app = triggers.apps.first(where: { env.runningBundleIDs.contains($0.bundleID) }) {
+            return "\(app.name) is open"
+        }
+        if triggers.externalDisplay && env.externalDisplay { return "External display connected" }
+        if triggers.onPower && env.hasBattery && env.onAC { return "Plugged in" }
+        if triggers.workHours && inWorkHours(now, schedule: schedule, cal: cal) { return "Work hours" }
+        return nil
+    }
+
+    /// Why the battery guard forbids staying awake, or nil when it's fine.
+    static func batteryStop(_ config: AwakeConfig, env: AwakeEnvironment) -> String? {
+        guard env.hasBattery, !env.onAC else { return nil }
+        if config.endWhenUnplugged { return "Unplugged from power" }
+        if config.endOnLowBattery, let pct = env.batteryPercent, pct < config.lowBatteryPercent {
+            return "Battery below \(config.lowBatteryPercent)%"
+        }
+        return nil
+    }
+
+    /// "2h 05m", "42m", "35s".
+    static func remaining(_ seconds: TimeInterval) -> String {
+        let s = max(0, Int(seconds.rounded(.up)))
+        if s < 60 { return "\(s)s" }
+        let minutes = (s + 59) / 60
+        if minutes < 60 { return "\(minutes)m" }
+        return String(format: "%dh %02dm", minutes / 60, minutes % 60)
+    }
+
+    /// Compact menu bar form: "42m", "2h05".
+    static func menuBarRemaining(_ seconds: TimeInterval) -> String {
+        let minutes = max(0, (Int(seconds.rounded(.up)) + 59) / 60)
+        if minutes < 60 { return "\(minutes)m" }
+        return String(format: "%dh%02d", minutes / 60, minutes % 60)
+    }
+
+    /// "30m", "1h", "1h 30m" for preset chips.
+    static func durationLabel(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes)m" }
+        return minutes % 60 == 0 ? "\(minutes / 60)h" : "\(minutes / 60)h \(minutes % 60)m"
+    }
+
+    static func clock(_ date: Date, cal: Calendar = .current) -> String {
+        let c = cal.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+    }
+
+    /// The next occurrence of a wall-clock time: today if still ahead, else tomorrow.
+    static func nextOccurrence(ofTimeIn picked: Date, after now: Date, cal: Calendar = .current) -> Date {
+        let t = cal.dateComponents([.hour, .minute], from: picked)
+        let today = cal.date(bySettingHour: t.hour ?? 0, minute: t.minute ?? 0, second: 0, of: now) ?? now
+        return today > now ? today : (cal.date(byAdding: .day, value: 1, to: today) ?? today)
+    }
+}
+
+// MARK: - The live state the UI renders
+
+struct AwakeState: Equatable {
+    enum Source: Equatable {
+        case manual(AwakeSession)
+        case trigger(String)
+    }
+    var source: Source
+    var displayOn: Bool
+
+    var session: AwakeSession? {
+        if case .manual(let s) = source { return s }
+        return nil
+    }
+    var endsAt: Date? { session?.endsAt }
+    var isTrigger: Bool {
+        if case .trigger = source { return true }
+        return false
+    }
+}
+
+// MARK: - Engine
+
+/// Keeps the Mac awake with IOKit power assertions — the same two Amphetamine
+/// holds ("PreventUserIdleSystemSleep", plus "PreventUserIdleDisplaySleep"
+/// unless the display may sleep). Exactly one pair is held at a time, for
+/// whichever of a manual session or a satisfied trigger is in charge.
+@MainActor
+final class AwakeEngine: ObservableObject {
+    static let shared = AwakeEngine()
+
+    @Published private(set) var state: AwakeState?
+    @Published private(set) var env = AwakeEnvironment()
+    /// Why the last session ended ("Timer finished"), shown briefly in the tab.
+    @Published private(set) var lastEndReason: String?
+
+    private weak var store: ConfigStore?
+    private var systemAssertion: IOPMAssertionID = 0
+    private var displayAssertion: IOPMAssertionID = 0
+    private var timer: Timer?
+    private var powerSource: CFRunLoopSource?
+    private var hotkeyToken: UInt32?
+    private var boundShortcut: KeyCombo?
+    private var warnedFor: Date?
+    private var screenSaverFiredForIdle = false
+    private var observers: [NSObjectProtocol] = []
+    private var configObservation: Any?
+
+    // MARK: Lifecycle
+
+    func start(store: ConfigStore) {
+        guard self.store == nil else { return }
+        self.store = store
+        AwakeNotifier.prepare()
+        refreshEnvironment()
+
+        // A session saved before quitting resumes — unless it has already run out.
+        if let saved = store.config.awake.session {
+            if let end = saved.endsAt, end <= Date() {
+                store.config.awake.session = nil
+            } else if let app = saved.app, !env.runningBundleIDs.contains(app.bundleID) {
+                store.config.awake.session = nil
+            }
+        } else if store.config.awake.startAtLaunch {
+            store.config.awake.session = AwakeSession(kind: .indefinite)
+        }
+
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification,
+                     NSWorkspace.didWakeNotification] {
+            observers.append(ws.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { AwakeEngine.shared.refresh() }
+            })
+        }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { AwakeEngine.shared.refresh() } })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { AwakeEngine.shared.releaseAssertions() } })
+
+        if let source = IOPSNotificationCreateRunLoopSource({ _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { AwakeEngine.shared.refresh() } }
+        }, nil)?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+            powerSource = source
+        }
+
+        configObservation = store.$config
+            .map(\.awake)
+            .removeDuplicates()
+            .sink { _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { AwakeEngine.shared.refresh() } }
+            }
+
+        let timer = Timer(timeInterval: 1, repeats: true) { _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { AwakeEngine.shared.tick() } }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+        refresh()
+    }
+
+    // MARK: Actions
+
+    /// Starts (or replaces) a manual session.
+    func begin(_ kind: AwakeSessionKind) {
+        guard let store else { return }
+        lastEndReason = nil
+        warnedFor = nil
+        store.config.awake.session = AwakeSession(kind: kind, allowDisplaySleep: store.config.awake.allowDisplaySleep)
+        if store.config.awake.sounds { NSSound(named: "Tink")?.play() }
+        refresh()
+    }
+
+    func begin(minutes: Int) {
+        begin(minutes <= 0 ? .indefinite : .until(AwakePlanner.end(afterMinutes: minutes, from: Date())))
+    }
+
+    /// Adds time to a running timed session (or makes an indefinite one timed from now).
+    func extend(minutes: Int) {
+        guard let store, var session = store.config.awake.session else { return }
+        let base = max(session.endsAt ?? Date(), Date())
+        session.kind = .until(base.addingTimeInterval(TimeInterval(minutes) * 60))
+        store.config.awake.session = session
+        warnedFor = nil
+    }
+
+    func stop() {
+        end(reason: nil)
+    }
+
+    /// The shortcut: stop if a manual session runs, else start the default one.
+    func toggle() {
+        guard let store else { return }
+        if store.config.awake.session != nil {
+            stop()
+        } else {
+            begin(minutes: store.config.awake.defaultMinutes)
+        }
+    }
+
+    // MARK: Internals
+
+    private func end(reason: String?) {
+        guard let store, store.config.awake.session != nil else { return }
+        store.config.awake.session = nil
+        lastEndReason = reason
+        let awake = store.config.awake
+        if awake.sounds { NSSound(named: "Pop")?.play() }
+        if let reason, awake.notifyOnEnd {
+            AwakeNotifier.post(title: "Your Mac can sleep again", body: reason)
+        }
+        refresh()
+    }
+
+    private func tick() {
+        guard let store else { return }
+        let now = Date()
+        let awake = store.config.awake
+        if let session = awake.session, let endsAt = session.endsAt {
+            if endsAt <= now {
+                end(reason: "The timer finished")
+                return
+            }
+            let warn = TimeInterval(awake.warnBeforeEndMinutes) * 60
+            if warn > 0, endsAt.timeIntervalSince(now) <= warn, warnedFor != endsAt {
+                warnedFor = endsAt
+                AwakeNotifier.post(
+                    title: "Staying awake for \(AwakePlanner.remaining(endsAt.timeIntervalSince(now))) more",
+                    body: "Open Tempo to add time."
+                )
+            }
+        }
+        // Power and triggers change rarely; the rest of the time a cheap poll
+        // every few seconds catches schedule edges and battery drain.
+        if Int(now.timeIntervalSince1970) % 5 == 0 { refresh() }
+        maybeStartScreenSaver(awake: awake)
+    }
+
+    /// Re-reads the environment and brings the assertions in line with it.
+    func refresh() {
+        guard let store else { return }
+        refreshEnvironment()
+        let awake = store.config.awake
+        let now = Date()
+
+        if var session = awake.session {
+            if let app = session.app, !env.runningBundleIDs.contains(app.bundleID) {
+                end(reason: "\(app.name) quit")
+                return
+            }
+            if let stop = AwakePlanner.batteryStop(awake, env: env) {
+                end(reason: stop)
+                return
+            }
+            if let endsAt = session.endsAt, endsAt <= now {
+                end(reason: "The timer finished")
+                return
+            }
+            session.allowDisplaySleep = awake.allowDisplaySleep
+            apply(AwakeState(source: .manual(session), displayOn: !awake.allowDisplaySleep))
+            return
+        }
+
+        if AwakePlanner.batteryStop(awake, env: env) == nil,
+            let reason = AwakePlanner.triggerReason(awake.triggers, env: env, now: now, schedule: store.config.schedule) {
+            apply(AwakeState(source: .trigger(reason), displayOn: !awake.allowDisplaySleep))
+        } else {
+            apply(nil)
+        }
+        rebindShortcut(awake.toggleShortcut)
+    }
+
+    private func rebindShortcut(_ combo: KeyCombo?) {
+        guard combo != boundShortcut else { return }
+        boundShortcut = combo
+        HotkeyCenter.shared.rebind(&hotkeyToken, to: combo) {
+            MainActor.assumeIsolated { AwakeEngine.shared.toggle() }
+        }
+    }
+
+    private func apply(_ newState: AwakeState?) {
+        if newState != state { state = newState }
+        if let newState {
+            let name = newState.isTrigger ? "Tempo (Auto)" : "Tempo (Keep awake)"
+            if systemAssertion == 0 {
+                systemAssertion = Self.create(kIOPMAssertPreventUserIdleSystemSleep, "\(name): system")
+            }
+            if newState.displayOn {
+                if displayAssertion == 0 {
+                    displayAssertion = Self.create(kIOPMAssertPreventUserIdleDisplaySleep, "\(name): display")
+                }
+            } else {
+                Self.release(&displayAssertion)
+            }
+        } else {
+            releaseAssertions()
+        }
+        rebindShortcut(store?.config.awake.toggleShortcut)
+    }
+
+    func releaseAssertions() {
+        Self.release(&displayAssertion)
+        Self.release(&systemAssertion)
+    }
+
+    /// The display assertion also holds off the screen saver. When the user
+    /// still wants the saver, start it ourselves once they've been idle for
+    /// the system's saver delay — as Amphetamine does.
+    private func maybeStartScreenSaver(awake: AwakeConfig) {
+        guard let state, state.displayOn, awake.allowScreenSaver else {
+            screenSaverFiredForIdle = false
+            return
+        }
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        let delay = TimeInterval(max(1, awake.screenSaverMinutes)) * 60
+        if idle < delay {
+            screenSaverFiredForIdle = false
+        } else if !screenSaverFiredForIdle {
+            screenSaverFiredForIdle = true
+            let url = URL(fileURLWithPath: "/System/Library/CoreServices/ScreenSaverEngine.app")
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+
+    private func refreshEnvironment() {
+        var next = AwakeEnvironment()
+        let power = Self.readPower()
+        next.onAC = power.onAC
+        next.hasBattery = power.hasBattery
+        next.batteryPercent = power.percent
+        next.externalDisplay = NSScreen.screens.contains { screen in
+            guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+            else { return false }
+            return CGDisplayIsBuiltin(id) == 0
+        }
+        next.runningBundleIDs = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        if next != env { env = next }
+    }
+
+    // MARK: IOKit
+
+    private static func create(_ type: String, _ name: String) -> IOPMAssertionID {
+        var id: IOPMAssertionID = 0
+        let result = IOPMAssertionCreateWithName(
+            type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), name as CFString, &id
+        )
+        return result == kIOReturnSuccess ? id : 0
+    }
+
+    private static func release(_ id: inout IOPMAssertionID) {
+        if id != 0 {
+            IOPMAssertionRelease(id)
+            id = 0
+        }
+    }
+
+    static func readPower() -> (onAC: Bool, hasBattery: Bool, percent: Int?) {
+        let providing = IOPSGetProvidingPowerSourceType(nil)?.takeRetainedValue() as String?
+        let onAC = providing != kIOPMBatteryPowerKey
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+            let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
+        else { return (onAC, false, nil) }
+        for source in list {
+            guard let d = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
+                d[kIOPSTypeKey] as? String == kIOPSInternalBatteryType
+            else { continue }
+            let current = d[kIOPSCurrentCapacityKey] as? Int ?? 0
+            let max = d[kIOPSMaxCapacityKey] as? Int ?? 100
+            let percent = max > 0 ? Int((Double(current) / Double(max) * 100).rounded()) : nil
+            return (onAC, true, percent)
+        }
+        return (onAC, false, nil)
+    }
+}
+
+// MARK: - Notifications
+
+enum AwakeNotifier {
+    private static var available: Bool {
+        Bundle.main.bundleIdentifier != nil && Bundle.main.bundlePath.hasSuffix(".app")
+    }
+
+    static func prepare() {
+        guard available else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    static func post(title: String, body: String) {
+        guard available else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "tempo.awake.\(UUID().uuidString)", content: content, trigger: nil)
+        )
+    }
+}

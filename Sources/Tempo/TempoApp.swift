@@ -11,16 +11,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (a legal drop target) before the first drag — a window shown only
         // after a drag starts can never receive that drag's drop.
         if let store = ConfigStore.shared {
-            ShelfWindow.shared.prewarm(store: store)
+            startFeatures(store)
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let store = ConfigStore.shared { ShelfWindow.shared.prewarm(store: store) }
+                if let store = ConfigStore.shared { self.startFeatures(store) }
             }
         }
         // Pop the Shelf up automatically whenever a file drag starts.
         DragWatcher.shared.start()
         // Nudge the menu bar dropdown under the icon (SwiftUI opens it offset).
         PanelAligner.shared.start()
+    }
+
+    @MainActor
+    private func startFeatures(_ store: ConfigStore) {
+        ShelfWindow.shared.prewarm(store: store)
+        AwakeEngine.shared.start(store: store)
     }
 }
 

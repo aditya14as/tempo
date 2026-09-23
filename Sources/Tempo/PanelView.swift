@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum PanelTab: String, CaseIterable, Identifiable {
-    case now, tasks, week
+    case now, tasks, week, awake
 
     var id: String { rawValue }
     var label: String {
@@ -9,6 +9,7 @@ enum PanelTab: String, CaseIterable, Identifiable {
         case .now: return "Now"
         case .tasks: return "Tasks"
         case .week: return "Week"
+        case .awake: return "Awake"
         }
     }
     var icon: String {
@@ -16,6 +17,7 @@ enum PanelTab: String, CaseIterable, Identifiable {
         case .now: return "gauge.with.needle"
         case .tasks: return "checklist"
         case .week: return "calendar"
+        case .awake: return "bolt.fill"
         }
     }
 }
@@ -66,6 +68,8 @@ struct PanelView: View {
                     TodoSection(now: now)
                 case .week:
                     WeekGlance(now: now)
+                case .awake:
+                    AwakeTab(now: now)
                 }
                 footer
             }
