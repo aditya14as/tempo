@@ -8,7 +8,10 @@ let package = Package(
         .executableTarget(
             name: "Tempo",
             path: "Sources/Tempo",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            // The Command Line Tools have no XCTest, yet SwiftPM still passes
+            // the linker its search paths, and ld warns they don't exist.
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-w"])]
         ),
     ]
 )

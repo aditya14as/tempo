@@ -15,6 +15,7 @@ enum PrivateAPIs {
     typealias SetSymbolicHotKeyEnabledFn = @convention(c) (Int32, Bool) -> Int32
     typealias AXGetWindowFn = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
     typealias GetProcessForPIDFn = @convention(c) (pid_t, UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
+    typealias CreateWithRemoteTokenFn = @convention(c) (CFData) -> Unmanaged<AXUIElement>?
 
     private static let skyLight: UnsafeMutableRawPointer? =
         dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
@@ -36,6 +37,7 @@ enum PrivateAPIs {
     static let setSymbolicHotKeyEnabled = symbol("CGSSetSymbolicHotKeyEnabled", as: SetSymbolicHotKeyEnabledFn.self)
     static let axGetWindow = symbol("_AXUIElementGetWindow", as: AXGetWindowFn.self)
     static let getProcessForPID = symbol("GetProcessForPID", as: GetProcessForPIDFn.self)
+    static let createWithRemoteToken = symbol("_AXUIElementCreateWithRemoteToken", as: CreateWithRemoteTokenFn.self)
 
     /// Name → resolved?, for the `--check` info lines.
     static var resolution: [(String, Bool)] {
@@ -48,6 +50,7 @@ enum PrivateAPIs {
             ("CGSSetSymbolicHotKeyEnabled", setSymbolicHotKeyEnabled != nil),
             ("_AXUIElementGetWindow", axGetWindow != nil),
             ("GetProcessForPID", getProcessForPID != nil),
+            ("_AXUIElementCreateWithRemoteToken", createWithRemoteToken != nil),
         ]
     }
 
@@ -58,6 +61,30 @@ enum PrivateAPIs {
         guard let axGetWindow else { return 0 }
         var wid: CGWindowID = 0
         return axGetWindow(element, &wid) == .success ? wid : 0
+    }
+
+    /// The AX element of a window Accessibility doesn't list — one on another
+    /// Space, such as a fullscreen window. Apps number their AX elements from
+    /// zero, so this walks the ids (AltTab's trick) until one is that window.
+    /// About 50 ms for a big app, stopping at the first match.
+    static func windowElement(pid: pid_t, wid: CGWindowID) -> AXUIElement? {
+        guard wid != 0, let createWithRemoteToken, let axGetWindow else { return nil }
+        // pid (4 bytes), 0 (4), "coco" (4), element id (8).
+        var token = Data(count: 20)
+        withUnsafeBytes(of: pid) { token.replaceSubrange(0..<4, with: $0) }
+        withUnsafeBytes(of: Int32(0x636f636f)) { token.replaceSubrange(8..<12, with: $0) }
+        for id: UInt64 in 0..<1000 {
+            withUnsafeBytes(of: id) { token.replaceSubrange(12..<20, with: $0) }
+            guard let element = createWithRemoteToken(token as CFData)?.takeRetainedValue() else { continue }
+            AXUIElementSetMessagingTimeout(element, 0.25)
+            var found: CGWindowID = 0
+            // Buttons and tabs report their window's id too; only the window itself will do.
+            guard axGetWindow(element, &found) == .success, found == wid,
+                WindowScanner.copy(element, kAXRoleAttribute) as? String == kAXWindowRole
+            else { continue }
+            return element
+        }
+        return nil
     }
 
     static func processSerialNumber(for pid: pid_t) -> ProcessSerialNumber? {

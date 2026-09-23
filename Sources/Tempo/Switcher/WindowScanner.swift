@@ -255,11 +255,15 @@ enum WindowScanner {
             return
         }
         if app.isHidden { app.unhide() }
-        if let element = item.element, item.isMinimized {
+        let element = windowElement(item)
+        if let element, item.isMinimized {
             AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
         let fronted = PrivateAPIs.makeFrontAndKey(pid: item.pid, wid: item.wid)
-        if let element = item.element {
+        // Raising is what moves to the window's Space when its app is already
+        // in front (two Chrome windows, one fullscreen): fronting the process
+        // alone leaves you where you are.
+        if let element {
             AXUIElementPerformAction(element, kAXRaiseAction as CFString)
             AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
         }
@@ -267,7 +271,7 @@ enum WindowScanner {
             app.activate()
         }
         if cursorFollows {
-            let frame = item.element.map(self.frame(of:)) ?? item.frame
+            let frame = element.map(self.frame(of:)) ?? item.frame
             warpCursor(into: frame)
         }
     }
@@ -281,15 +285,21 @@ enum WindowScanner {
         CGWarpMouseCursorPosition(CGPoint(x: frame.midX, y: frame.midY))
     }
 
+    /// The item's AX element, looked up by window id when the scan couldn't
+    /// see it (windows on other Spaces).
+    private static func windowElement(_ item: SwitchItem) -> AXUIElement? {
+        item.element ?? PrivateAPIs.windowElement(pid: item.pid, wid: item.wid)
+    }
+
     static func close(_ item: SwitchItem) {
-        guard let element = item.element,
+        guard let element = windowElement(item),
             let button = copy(element, kAXCloseButtonAttribute), CFGetTypeID(button) == AXUIElementGetTypeID()
         else { return }
         AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
     }
 
     static func toggleMinimize(_ item: SwitchItem) {
-        guard let element = item.element else { return }
+        guard let element = windowElement(item) else { return }
         AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
                                      item.isMinimized ? kCFBooleanFalse : kCFBooleanTrue)
     }

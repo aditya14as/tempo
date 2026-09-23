@@ -3,9 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# The Command Line Tools have no XCTest, yet SwiftPM still passes the linker
-# search paths for it, so ld warns that they don't exist. -w quiets that.
-swift build -c release -Xlinker -w
+swift build -c release
 
 APP="dist/Tempo.app"
 rm -rf "$APP"
