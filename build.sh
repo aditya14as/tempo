@@ -3,7 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-swift build -c release
+# Extra arguments go to swift build (Homebrew passes --disable-sandbox:
+# SwiftPM's own sandbox can't start inside Homebrew's).
+swift build -c release "$@"
 
 APP="dist/Tempo.app"
 rm -rf "$APP"

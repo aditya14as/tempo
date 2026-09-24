@@ -6,8 +6,8 @@
   A tiny native macOS menu bar app that shows how far you are through your
   work day, week, month, and year — in a glassy, customizable drop-down panel.
   It also keeps your Mac awake (like Amphetamine), switches windows with
-  ⌥⇥ (like AltTab), and remembers everything you copy (like Maccy), so one
-  app replaces four.
+  ⌥⇥ (like AltTab), remembers everything you copy (like Maccy), and holds
+  files on a floating shelf (like Dropzone), so one app replaces four.
 </p>
 
 ---
@@ -23,9 +23,43 @@ at 18:00; the week runs Monday 10:00 to Friday 18:00, counting work hours only.
 Month and year can each count work hours or plain calendar time. Everything is
 configurable, saves automatically, and survives restarts.
 
+## Benchmark
+
+Tempo next to the apps it replaces, each freshly launched and left alone
+for 30 seconds (Apple M4, macOS 27, September 2026). Memory is the physical
+footprint, the figure Activity Monitor's Memory column shows.
+
+| App | Does | Memory | Idle CPU | App size |
+|---|---|---:|---:|---:|
+| **Tempo 1.0** | all of the below | **24 MB** | ~0.1% | **3.2 MB** |
+| AltTab 11.6 | window switcher | 42 MB | 0.02% | 13 MB |
+| Maccy 2.5 | clipboard history | 79 MB | 0.00% | 8.1 MB |
+| Amphetamine 5.3 | keep awake | 33 MB | 0.00% | 7.6 MB |
+| Dropzone 4.80 | file shelf | 65 MB | 0.00% | 73 MB |
+| *The four together* | | *219 MB* | | *102 MB* |
+
+After a working session (the ⌥⇥ switcher, the panel's tabs and the
+clipboard popup all used) Tempo settles around 50 MB: it keeps the switcher's
+window previews and its popups ready so they open instantly. Re-run it
+yourself with `./Tools/benchmark.sh`.
+
 ## Install
 
-One line, macOS 14+:
+macOS 14+. Tempo builds from source with the free Apple Command Line Tools
+(no Xcode needed). Pick either way:
+
+**Homebrew**
+
+```sh
+brew tap aditya14as/tempo https://github.com/aditya14as/tempo
+brew install tempo
+cp -R "$(brew --prefix tempo)/Tempo.app" /Applications/ && open /Applications/Tempo.app
+```
+
+Homebrew can't write to `/Applications` itself, hence the last line. To
+update: `brew reinstall tempo`, then run the last line again.
+
+**One line**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aditya14as/tempo/main/install.sh | bash
