@@ -117,7 +117,7 @@ final class SwitcherController: ObservableObject {
         // Accessibility can be granted at any moment; pick it up without a relaunch.
         checkPermission()
         let timer = Timer(timeInterval: 2, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.checkPermission() } }
+            MainActor.assumeIsolated { SwitcherController.shared.checkPermission() }
         }
         RunLoop.main.add(timer, forMode: .common)
         permissionTimer = timer
@@ -435,6 +435,13 @@ final class SwitcherController: ObservableObject {
         end()
     }
 
+    /// Low memory: let go of window pictures unless the switcher is up.
+    func dropIdlePreviews() {
+        guard session == nil else { return }
+        PreviewStore.shared.forgetAll()
+        model.images = [:]
+    }
+
     private func end() {
         session = nil
         pollTimer?.invalidate()
@@ -449,7 +456,7 @@ final class SwitcherController: ObservableObject {
     private func startPolling() {
         pollTimer?.invalidate()
         let timer = Timer(timeInterval: 0.03, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { SwitcherController.shared.pollModifiers() } }
+            MainActor.assumeIsolated { SwitcherController.shared.pollModifiers() }
         }
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
@@ -591,8 +598,10 @@ final class SwitcherController: ObservableObject {
         let wids = model.items.filter { !$0.isWindowless && $0.wid != 0 }.map(\.wid)
         // ⌥` shows one app: keep the other windows' previews for the next ⌥⇥.
         if session?.onlyPID == nil { PreviewStore.shared.forget(except: Set(wids)) }
-        let pixels = SwitcherMetrics.cardWidth(model.size) * 2
-        PreviewStore.shared.capture(wids, pixelWidth: pixels) { [weak self] wid, image in
+        // The card's image area (card minus its padding), at 2× for Retina.
+        let box = CGSize(width: (SwitcherMetrics.cardWidth(model.size) - 24) * 2,
+                         height: (SwitcherMetrics.previewHeight(model.size) - 12) * 2)
+        PreviewStore.shared.capture(wids, box: box) { [weak self] wid, image in
             self?.model.images[wid] = image
         }
     }

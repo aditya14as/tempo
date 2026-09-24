@@ -18,6 +18,7 @@ final class PanelAligner {
     private weak var window: NSWindow?
     private var contentSize: CGSize = .zero
     private var observer: NSObjectProtocol?
+    private var frameObservers: [NSObjectProtocol] = []
     private var fitting = false
 
     func start() {
@@ -46,7 +47,39 @@ final class PanelAligner {
     func attach(_ window: NSWindow) {
         guard window !== self.window else { return }
         self.window = window
+        PanelVisibility.shared.track(window)
+        // While the content's height animates (switching tabs), SwiftUI
+        // resizes the window on every frame and each time snaps it back to its
+        // own spot, right of the icon. Put it back in the same call, before
+        // the frame is drawn, or the panel visibly jumps sideways.
+        frameObservers.forEach(NotificationCenter.default.removeObserver)
+        frameObservers = [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: window, queue: nil) { _ in
+                MainActor.assumeIsolated { PanelAligner.shared.holdPlace() }
+            }
+        }
         fit()
+    }
+
+    /// Moves the window back under the icon, keeping whatever size it has now.
+    private func holdPlace() {
+        guard !fitting, let window, window.isVisible, let origin = origin(for: window.frame.size),
+            origin != window.frame.origin
+        else { return }
+        fitting = true
+        defer { fitting = false }
+        window.setFrameOrigin(origin)
+    }
+
+    /// Where a panel of `size` belongs: centered under the icon, clamped
+    /// on-screen, its top edge just under the menu bar.
+    private func origin(for size: CGSize) -> NSPoint? {
+        guard let icon = StatusItemDropper.iconScreenFrame() else { return nil }
+        let screen = NSScreen.screens.first { $0.frame.intersects(icon) } ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return nil }
+        let x = max(visible.minX + 8, min(icon.midX - size.width / 2, visible.maxX - size.width - 8))
+        // The same spot SwiftUI hangs it.
+        return NSPoint(x: x, y: visible.maxY - 2 - size.height)
     }
 
     /// PanelView's laid-out size (its intrinsic height, not the window's).
@@ -69,18 +102,13 @@ final class PanelAligner {
     }
 
     private func fit() {
-        guard let window, let icon = StatusItemDropper.iconScreenFrame() else { return }
-        let screen = NSScreen.screens.first { $0.frame.intersects(icon) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-
-        let width = contentSize.width > 0 ? contentSize.width : window.frame.width
-        let height = contentSize.height > 0 ? contentSize.height : window.frame.height
-        // Centered under the icon, clamped on-screen.
-        var x = icon.midX - width / 2
-        x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
-        // Top edge just under the menu bar — the same spot SwiftUI hangs it.
-        let top = visible.maxY - 2
-        let frame = NSRect(x: x, y: top - height, width: width, height: height)
+        guard let window else { return }
+        // Whole points: SwiftUI sizes the window in whole points, and a
+        // fractional target would have the two fighting over half a point.
+        let width = contentSize.width > 0 ? contentSize.width.rounded() : window.frame.width
+        let height = contentSize.height > 0 ? contentSize.height.rounded() : window.frame.height
+        guard let origin = origin(for: CGSize(width: width, height: height)) else { return }
+        let frame = NSRect(origin: origin, size: CGSize(width: width, height: height))
         guard !frame.equalTo(window.frame), !fitting else { return }
         fitting = true
         defer { fitting = false }
@@ -91,6 +119,30 @@ final class PanelAligner {
             window.setFrame(frame, display: false)
         }
         window.setFrameOrigin(frame.origin)
+    }
+}
+
+/// Whether the menu bar dropdown is on screen, so its once-a-second clock
+/// can stop while it's closed.
+@MainActor
+final class PanelVisibility: ObservableObject {
+    static let shared = PanelVisibility()
+    @Published private(set) var visible = true
+    private var observers: [NSObjectProtocol] = []
+
+    func track(_ window: NSWindow) {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        // Occlusion says when it's gone; becoming key (every open) is a
+        // second, certain signal that it's back.
+        observers = [NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { note in
+                guard let window = note.object as? NSWindow else { return }
+                MainActor.assumeIsolated {
+                    let visible = window.isKeyWindow || window.occlusionState.contains(.visible)
+                    if PanelVisibility.shared.visible != visible { PanelVisibility.shared.visible = visible }
+                }
+            }
+        }
     }
 }
 
@@ -119,3 +171,4 @@ struct PanelWindowTracker: NSViewRepresentable {
         }
     }
 }
+

@@ -185,7 +185,7 @@ final class Ticker: ObservableObject {
 
     init(interval: TimeInterval = 30) {
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async { self?.now = Date() }
+            self?.now = Date()
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer

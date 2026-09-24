@@ -347,7 +347,7 @@ final class DragWatcher {
     func start() {
         guard timer == nil else { return }
         let timer = Timer(timeInterval: 0.04, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { DragWatcher.shared.tick() } }
+            MainActor.assumeIsolated { DragWatcher.shared.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -471,8 +471,9 @@ enum StatusItemDropper {
     }
 
     /// Debug aid: what the status item window looks like around our overlay.
+    /// Only written when `/tmp/tempo-drop.log` exists (`touch` it to turn on).
     private static func diagnose(_ button: NSStatusBarButton, note: String) {
-        guard let window = button.window else { return }
+        guard let window = button.window, FileManager.default.fileExists(atPath: "/tmp/tempo-drop.log") else { return }
         func tree(_ view: NSView, depth: Int) -> String {
             let pad = String(repeating: "  ", count: depth)
             let types = view.registeredDraggedTypes.count

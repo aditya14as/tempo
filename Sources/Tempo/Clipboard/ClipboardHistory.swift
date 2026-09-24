@@ -64,6 +64,8 @@ final class ClipboardHistory: ObservableObject {
 
     private init() {
         thumbnails.countLimit = 300
+        // Big previews are up to 1200 px; bound the bytes, not just the count.
+        thumbnails.totalCostLimit = 48 << 20
     }
 
     // MARK: - Lifecycle
@@ -168,7 +170,8 @@ final class ClipboardHistory: ObservableObject {
                     MainActor.assumeIsolated {
                         let history = ClipboardHistory.shared
                         if let image {
-                            history.thumbnails.setObject(image, forKey: key as NSString)
+                            let pixels = image.representations.first.map { $0.pixelsWide * $0.pixelsHigh } ?? 0
+                            history.thumbnails.setObject(image, forKey: key as NSString, cost: pixels * 4)
                         } else {
                             history.thumbnailFailures.insert(key)
                         }

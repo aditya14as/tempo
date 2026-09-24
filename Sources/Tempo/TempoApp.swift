@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DragWatcher.shared.start()
         // Nudge the menu bar dropdown under the icon (SwiftUI opens it offset).
         PanelAligner.shared.start()
+        MemoryTrim.watchPressure()
     }
 
     /// The store is created by SwiftUI; keep checking until it exists, since
@@ -42,6 +43,9 @@ enum TempoMain {
     static func main() {
         if CommandLine.arguments.contains("--check") {
             exit(Int32(Checks.runAll()))
+        }
+        if let flag = CommandLine.arguments.firstIndex(of: "--ocr"), flag + 1 < CommandLine.arguments.count {
+            exit(ClipboardOCR.runHelper(CommandLine.arguments[flag + 1]))
         }
         TempoApp.main()
     }

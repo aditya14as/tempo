@@ -8,7 +8,9 @@ swift build -c release
 APP="dist/Tempo.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/Tempo "$APP/Contents/MacOS/Tempo"
+# Ship without the symbol table (about 5 MB); .build/release/Tempo keeps
+# it for symbolicating a crash.
+strip -o "$APP/Contents/MacOS/Tempo" .build/release/Tempo
 cp Assets/Tempo.icns "$APP/Contents/Resources/Tempo.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'

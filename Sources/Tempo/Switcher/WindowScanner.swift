@@ -214,6 +214,8 @@ enum WindowScanner {
         // Drop helper popups hiding inside a real window of the same app.
         let windows = known + items
         return items.filter { item in
+            // Titled windows are never popups; skip the Space lookups for them.
+            guard item.title.trimmingCharacters(in: .whitespaces).isEmpty else { return true }
             let others = windows
                 .filter { $0.pid == item.pid && $0.wid != item.wid && $0.wid != 0 }
                 .map { (frame: $0.frame, spaces: itemSpaces[$0.wid] ?? Set(PrivateAPIs.spaces(of: $0.wid))) }

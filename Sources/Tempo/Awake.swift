@@ -260,8 +260,9 @@ final class AwakeEngine: ObservableObject {
                 DispatchQueue.main.async { MainActor.assumeIsolated { AwakeEngine.shared.refresh() } }
             }
 
+        // Main run loop already: no extra hop through the main queue.
         let timer = Timer(timeInterval: 1, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { AwakeEngine.shared.tick() } }
+            MainActor.assumeIsolated { AwakeEngine.shared.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -543,8 +544,12 @@ final class AwakeEngine: ObservableObject {
             else { return false }
             return CGDisplayIsBuiltin(id) == 0
         }
-        next.runningBundleIDs = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
         let triggers = store?.config.awake.triggers ?? AwakeTriggers()
+        // Each bundle ID is a round trip to Launch Services; only ask when an
+        // app trigger or a "while app is open" session will read the list.
+        if !triggers.apps.isEmpty || store?.config.awake.session?.app != nil {
+            next.runningBundleIDs = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        }
         if !triggers.wifiNetworks.isEmpty { next.wifiSSID = WiFiWatcher.shared.currentSSID() }
         if !triggers.usbDevices.isEmpty { next.usbDeviceIDs = Set(USBDevices.connected().map(\.id)) }
         if next != env { env = next }

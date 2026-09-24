@@ -15,9 +15,10 @@ final class PreviewStore {
 
     var available: Bool { Permissions.screenRecordingGranted }
 
-    /// Captures `wids` at about `pixelWidth` wide, calling `update` on the main
-    /// actor as each image lands. A newer request cancels delivery of older ones.
-    func capture(_ wids: [CGWindowID], pixelWidth: CGFloat, update: @escaping @MainActor (CGWindowID, NSImage) -> Void) {
+    /// Captures `wids` just big enough to fill `box` (in pixels), calling
+    /// `update` on the main actor as each image lands. A newer request cancels
+    /// delivery of older ones.
+    func capture(_ wids: [CGWindowID], box: CGSize, update: @escaping @MainActor (CGWindowID, NSImage) -> Void) {
         guard available, !wids.isEmpty else { return }
         generation += 1
         let token = generation
@@ -28,7 +29,9 @@ final class PreviewStore {
                 for wid in wids {
                     guard let window = windows[wid] else { continue }
                     let config = SCStreamConfiguration()
-                    let scale = pixelWidth / max(window.frame.width, 1)
+                    // Fit, never fill: a tall window is drawn height-bound, so
+                    // extra width would be pixels nobody sees.
+                    let scale = min(box.width / max(window.frame.width, 1), box.height / max(window.frame.height, 1))
                     config.width = max(1, Int(window.frame.width * min(scale, 2)))
                     config.height = max(1, Int(window.frame.height * min(scale, 2)))
                     config.showsCursor = false
@@ -48,6 +51,8 @@ final class PreviewStore {
             }
         }
     }
+
+    func forgetAll() { cache.removeAll() }
 
     func forget(except keep: Set<CGWindowID>) {
         cache = cache.filter { keep.contains($0.key) }

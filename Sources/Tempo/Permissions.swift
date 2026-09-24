@@ -27,14 +27,15 @@ enum Permissions {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] else { return false }
         let me = getpid()
+        // The cheap dictionary checks first; the app lookup last, and only
+        // for the few entries that pass them.
         return list.contains { entry in
             guard let pid = entry[kCGWindowOwnerPID as String] as? pid_t, pid != me,
-                NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
+                (entry[kCGWindowLayer as String] as? Int) == 0,
+                (entry[kCGWindowOwnerName as String] as? String) != "Dock",
+                !((entry[kCGWindowName as String] as? String) ?? "").isEmpty
             else { return false }
-            return (entry[kCGWindowOwnerPID as String] as? pid_t) != me
-                && (entry[kCGWindowLayer as String] as? Int) == 0
-                && (entry[kCGWindowOwnerName as String] as? String) != "Dock"
-                && !((entry[kCGWindowName as String] as? String) ?? "").isEmpty
+            return NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
         }
     }
 
@@ -144,7 +145,7 @@ final class PermissionCenter: ObservableObject {
         refresh()
         guard timer == nil else { return }
         let timer = Timer(timeInterval: 2, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { PermissionCenter.shared.refresh() } }
+            MainActor.assumeIsolated { PermissionCenter.shared.refresh() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -259,7 +260,7 @@ final class PermissionGuide {
         startedAt = Date()
         timer?.invalidate()
         let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { PermissionGuide.shared.poll() } }
+            MainActor.assumeIsolated { PermissionGuide.shared.poll() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer

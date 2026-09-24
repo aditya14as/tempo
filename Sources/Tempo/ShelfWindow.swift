@@ -277,7 +277,9 @@ final class ShelfWindow {
             x = min(x, open.frame.minX - width - 10)
         }
         x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
-        panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
+        // Runs ~25×/sec while open; only touch the window when it would move.
+        let point = NSPoint(x: x, y: top)
+        if NSPoint(x: panel.frame.minX, y: panel.frame.maxY) != point { panel.setFrameTopLeftPoint(point) }
     }
 
     /// Places the card for a drag whose pointer is at `cursor`: centred below

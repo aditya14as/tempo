@@ -30,12 +30,19 @@ struct AppRef: Codable, Equatable, Hashable, Identifiable {
     }
 
     /// The app's icon, or a generic one if it isn't installed any more.
+    /// Remembered per app: views ask on every redraw, and each lookup goes to
+    /// Launch Services and makes a new image.
     var icon: NSImage {
+        if let cached = Self.icons.object(forKey: bundleID as NSString) { return cached }
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            return NSWorkspace.shared.icon(forFile: url.path)
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            Self.icons.setObject(icon, forKey: bundleID as NSString)
+            return icon
         }
         return NSWorkspace.shared.icon(for: .applicationBundle)
     }
+
+    private static let icons = NSCache<NSString, NSImage>()
 }
 
 /// A global keyboard shortcut: a virtual key code plus modifier flags

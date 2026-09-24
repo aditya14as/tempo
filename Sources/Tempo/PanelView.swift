@@ -49,6 +49,7 @@ enum PanelRequest {
 
 struct PanelView: View {
     @EnvironmentObject var store: ConfigStore
+    @ObservedObject private var visibility = PanelVisibility.shared
     @ViewState private var showSettings = false
     @ViewState private var tab: PanelTab = .now
 
@@ -75,7 +76,9 @@ struct PanelView: View {
     }
 
     private var progressContent: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        // SwiftUI keeps the dropdown's views alive while it's closed; the clock
+        // only needs to tick while someone can see it.
+        TimelineView(PanelClock(paused: !visibility.visible)) { context in
             let now = context.date
             let config = store.config
             let tabs = visibleTabs
@@ -628,6 +631,25 @@ struct MetricRowView: View {
             Text(snapshot.subtitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Ticks every second from now; paused, it gives just the current time once
+/// (a real date, so anything drawn while hidden is still correct).
+struct PanelClock: TimelineSchedule {
+    var paused: Bool
+
+    func entries(from start: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        var next = start
+        var sent = false
+        return AnyIterator {
+            if paused {
+                defer { sent = true }
+                return sent ? nil : start
+            }
+            defer { next += 1 }
+            return next
         }
     }
 }
