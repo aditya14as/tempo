@@ -344,7 +344,31 @@ final class DragWatcher {
             + FileDropView.chromiumTypes
             + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
+    private var monitors: [Any] = []
+
     func start() {
+        guard monitors.isEmpty else { return }
+        // Polling 25 times a second forever costs battery for nothing. Every
+        // drag begins with the button going down, so mouse events (which need
+        // no permission to watch) wake the poll, and it goes back to sleep
+        // once the button is up, no drag is in flight and the Shelf is closed.
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { _ in
+            MainActor.assumeIsolated { DragWatcher.shared.wake() }
+        }) {
+            monitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { event in
+            MainActor.assumeIsolated { DragWatcher.shared.wake() }
+            return event
+        }) {
+            monitors.append(local)
+        }
+        wake()
+    }
+
+    /// Starts the 40 ms poll if it's asleep.
+    func wake() {
         guard timer == nil else { return }
         let timer = Timer(timeInterval: 0.04, repeats: true) { _ in
             MainActor.assumeIsolated { DragWatcher.shared.tick() }
@@ -354,6 +378,14 @@ final class DragWatcher {
     }
 
     private func tick() {
+        step()
+        if !dragActive, !ShelfWindow.shared.isOpen, NSEvent.pressedMouseButtons & 1 == 0 {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+
+    private func step() {
         let pb = NSPasteboard(name: .drag)
         let mouseDown = NSEvent.pressedMouseButtons & 1 == 1
         // Shelf switched off in Settings → Features: stay out of every drag.
@@ -405,6 +437,7 @@ final class DragWatcher {
         else { return }
         lastDragChange = NSPasteboard(name: .drag).changeCount
         dragActive = true
+        wake()
         ShelfWindow.shared.revealForDrag(store: store)
     }
 

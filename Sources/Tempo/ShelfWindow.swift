@@ -13,6 +13,7 @@ final class ShelfWindow {
     /// True while the card is opaque because the user opened it or it just
     /// caught a drop (versus merely lit up under a passing drag).
     private var open = false
+    var isOpen: Bool { open }
     /// True while the card is up purely because a drag is in flight; if the
     /// drag ends without a drop landing, it tucks itself away again.
     private var revealedByDrag = false
@@ -131,6 +132,7 @@ final class ShelfWindow {
     /// can see what you caught and drag it back out; it dims later when idle.
     func noteDrop() {
         open = true
+        DragWatcher.shared.wake()
         revealedByDrag = false
         idleTicks = 0
         DropGlow.shared.dragInFlight = false
@@ -212,6 +214,7 @@ final class ShelfWindow {
         ensurePanel(store: store)
         guard let panel else { return }
         open = true
+        DragWatcher.shared.wake()
         revealedByDrag = false
         idleTicks = 0
         anchor = .icon
