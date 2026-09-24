@@ -17,6 +17,14 @@ enum SwitcherChecks {
             && SwitcherLogic.isRealWindow(subrole: nil, title: "Game", size: big),
             "custom windows count when titled and window-sized")
 
+        let chrome = (frame: CGRect(x: 0, y: 39, width: 1800, height: 1110), spaces: Set<UInt64>([3]))
+        let dropdown = CGRect(x: 99, y: 64, width: 1319, height: 89)
+        Checks.expect(SwitcherLogic.isParkedPopup(title: "", frame: dropdown, spaces: [3], among: [chrome])
+            && !SwitcherLogic.isParkedPopup(title: "Inbox", frame: dropdown, spaces: [3], among: [chrome])
+            && !SwitcherLogic.isParkedPopup(title: "", frame: dropdown, spaces: [4], among: [chrome])
+            && !SwitcherLogic.isParkedPopup(title: "", frame: chrome.frame, spaces: [3], among: [chrome]),
+            "an untitled window inside its app's window on the same Space is a popup, not a second window")
+
         struct W { var wid: CGWindowID; var bucket: SwitcherLogic.Bucket }
         let list = [W(wid: 1, bucket: .minimized), W(wid: 2, bucket: .normal), W(wid: 3, bucket: .normal),
                     W(wid: 0, bucket: .windowless), W(wid: 4, bucket: .hidden), W(wid: 5, bucket: .normal)]

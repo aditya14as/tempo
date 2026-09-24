@@ -38,22 +38,19 @@ struct ClipboardSettingsSection: View {
                 }
                 caption("Older entries fall off past this. Pinned ones don't count and always stay.")
                 row("Search") {
-                    Picker("", selection: $store.config.clipboard.searchMode) {
+                    FittingPicker(selection: $store.config.clipboard.searchMode) {
                         ForEach(ClipSearchMode.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 row("Order") {
-                    Picker("", selection: $store.config.clipboard.sort) {
+                    FittingPicker(selection: $store.config.clipboard.sort) {
                         ForEach(ClipSort.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 row("Opens") {
-                    Picker("", selection: $store.config.clipboard.position) {
+                    FittingPicker(selection: $store.config.clipboard.position) {
                         ForEach(ClipPopupPosition.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 toggle("Paste into the front app", $store.config.clipboard.pasteOnSelect)
                 pasteNote

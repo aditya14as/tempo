@@ -15,39 +15,34 @@ struct SwitcherSettingsSection: View {
             if config.enabled {
                 permissionRow
                 row("Hold") {
-                    Picker("", selection: $store.config.switcher.modifier) {
+                    FittingPicker(selection: $store.config.switcher.modifier) {
                         ForEach(HoldModifier.allCases) { Text($0.symbol + " ⇥").tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 if config.modifier == .command {
                     caption("⌘⇥ replaces the built-in app switcher while Tempo runs.")
                 }
                 row("Style") {
-                    Picker("", selection: $store.config.switcher.style) {
+                    FittingPicker(selection: $store.config.switcher.style) {
                         ForEach(SwitcherStyle.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 if config.style == .thumbnails {
                     row("Size") {
-                        Picker("", selection: $store.config.switcher.size) {
+                        FittingPicker(selection: $store.config.switcher.size) {
                             ForEach(SwitcherSize.allCases) { Text($0.label).tag($0) }
                         }
-                        .pickerStyle(.segmented)
                     }
                 }
                 row("Windows") {
-                    Picker("", selection: $store.config.switcher.scope) {
+                    FittingPicker(selection: $store.config.switcher.scope) {
                         ForEach(WindowScope.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 row("Screen") {
-                    Picker("", selection: $store.config.switcher.screen) {
+                    FittingPicker(selection: $store.config.switcher.screen) {
                         ForEach(SwitcherScreen.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 toggle("\(config.modifier.symbol)` cycles the current app's windows", $store.config.switcher.appWindowsKey)
                 toggle("Show minimized windows", $store.config.switcher.showMinimized)

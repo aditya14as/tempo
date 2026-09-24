@@ -89,13 +89,11 @@ enum WindowScanner {
 
         let spaces = PrivateAPIs.spaceSnapshot()
         var items: [SwitchItem] = []
-        var seen = Set<CGWindowID>()
         for info in infos {
             guard let windows = byPID[info.pid] else { continue }
             for var item in windows {
                 if item.isMinimized && !config.showMinimized { continue }
                 if info.hidden && !config.showHidden { continue }
-                if item.wid != 0 { seen.insert(item.wid) }
                 item.spaceNumber = otherSpaceNumber(item.wid, spaces)
                 if config.scope == .currentSpace, item.spaceNumber != nil { continue }
                 items.append(item)
@@ -103,7 +101,7 @@ enum WindowScanner {
         }
 
         if config.scope == .allSpaces, let spaces {
-            items += otherSpaceWindows(apps: infos, known: seen, spaces: spaces)
+            items += otherSpaceWindows(apps: infos, known: items, spaces: spaces)
         }
 
         // Apps that are running but show nothing get one tile at the end.
@@ -185,17 +183,19 @@ enum WindowScanner {
     /// most apps, but the window server knows them all. Focusable through the
     /// private front-process call, which also switches to their Space.
     private static func otherSpaceWindows(
-        apps: [AppInfo], known: Set<CGWindowID>, spaces: PrivateAPIs.SpaceSnapshot
+        apps: [AppInfo], known: [SwitchItem], spaces: PrivateAPIs.SpaceSnapshot
     ) -> [SwitchItem] {
         guard PrivateAPIs.setFrontProcess != nil,
             let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return [] }
         let byPID = Dictionary(apps.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
+        let knownIDs = Set(known.map(\.wid))
         var items: [SwitchItem] = []
+        var itemSpaces: [CGWindowID: Set<UInt64>] = [:]
         for entry in list {
             guard (entry[kCGWindowLayer as String] as? Int) == 0,
                 let pid = entry[kCGWindowOwnerPID as String] as? pid_t, let app = byPID[pid],
-                let wid = entry[kCGWindowNumber as String] as? CGWindowID, !known.contains(wid),
+                let wid = entry[kCGWindowNumber as String] as? CGWindowID, !knownIDs.contains(wid),
                 (entry[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                 let boundsDict = entry[kCGWindowBounds as String] as? NSDictionary,
                 let bounds = CGRect(dictionaryRepresentation: boundsDict),
@@ -209,8 +209,17 @@ enum WindowScanner {
                 id: "w\(wid)", pid: pid, wid: wid, appName: app.name, bundleID: app.bundleID,
                 title: name, isHidden: app.hidden, frame: bounds, spaceNumber: number
             ))
+            itemSpaces[wid] = Set(on)
         }
-        return items
+        // Drop helper popups hiding inside a real window of the same app.
+        let windows = known + items
+        return items.filter { item in
+            let others = windows
+                .filter { $0.pid == item.pid && $0.wid != item.wid && $0.wid != 0 }
+                .map { (frame: $0.frame, spaces: itemSpaces[$0.wid] ?? Set(PrivateAPIs.spaces(of: $0.wid))) }
+            return !SwitcherLogic.isParkedPopup(title: item.title, frame: item.frame,
+                                                spaces: itemSpaces[item.wid] ?? [], among: others)
+        }
     }
 
     /// Every window the window server still has, on any Space (about 1 ms).

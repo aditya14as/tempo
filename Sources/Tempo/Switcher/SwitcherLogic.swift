@@ -25,6 +25,20 @@ enum SwitcherLogic {
         }
     }
 
+    /// Chrome keeps untitled helper windows (the address bar's dropdown,
+    /// bubbles) parked on its window's Space, and the window server lists
+    /// them like real windows. An untitled one sitting inside a bigger window
+    /// of the same app on the same Space is one of those.
+    static func isParkedPopup(title: String, frame: CGRect, spaces: Set<UInt64>,
+                              among others: [(frame: CGRect, spaces: Set<UInt64>)]) -> Bool {
+        guard title.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        let area = frame.width * frame.height
+        return others.contains { other in
+            other.frame.contains(frame) && other.frame.width * other.frame.height > area
+                && !other.spaces.isDisjoint(with: spaces)
+        }
+    }
+
     // MARK: Order
 
     enum Bucket: Int, Comparable {

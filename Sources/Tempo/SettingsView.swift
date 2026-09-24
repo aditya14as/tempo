@@ -18,6 +18,11 @@ struct SettingsView: View {
                 Button(action: onBack) {
                     Label("Back", systemImage: "chevron.left")
                         .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        // A plain button only takes clicks on drawn pixels;
+                        // the thin chevron and the gaps missed most of them.
+                        .padding(.vertical, 4)
+                        .padding(.trailing, 6)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 Spacer()

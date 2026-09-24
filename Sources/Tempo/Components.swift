@@ -104,3 +104,21 @@ struct SettingToggle: View {
         }
     }
 }
+
+/// A segmented picker that becomes a pop-up menu when its segments don't fit
+/// the width on offer, so a long option can't push Settings past the panel.
+struct FittingPicker<Value: Hashable, Content: View>: View {
+    @Binding var selection: Value
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Picker("", selection: $selection, content: content)
+                .pickerStyle(.segmented)
+            Picker("", selection: $selection, content: content)
+                .pickerStyle(.menu)
+                .fixedSize()
+        }
+        .labelsHidden()
+    }
+}
