@@ -51,13 +51,14 @@ macOS 14+. Tempo builds from source with the free Apple Command Line Tools
 **Homebrew**
 
 ```sh
-brew tap aditya14as/tempo https://github.com/aditya14as/tempo
-brew install tempo
+brew install aditya14as/tempo/tempo
 cp -R "$(brew --prefix tempo)/Tempo.app" /Applications/ && open /Applications/Tempo.app
 ```
 
-Homebrew can't write to `/Applications` itself, hence the last line. To
-update: `brew reinstall tempo`, then run the last line again.
+Homebrew can't write to `/Applications` itself, hence the second line. To
+update: `brew reinstall aditya14as/tempo/tempo`, then run the second line
+again. (The formula lives in
+[aditya14as/homebrew-tempo](https://github.com/aditya14as/homebrew-tempo).)
 
 **One line**
 
