@@ -91,6 +91,10 @@ struct AwakeTab: View {
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(theme.gradient)
             }
+        } else if let end = state?.endsAt {
+            Text(AwakePlanner.menuBarRemaining(end.timeIntervalSince(now)))
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .monospacedDigit()
         } else if state != nil {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 18, weight: .semibold))
@@ -116,6 +120,7 @@ struct AwakeTab: View {
             if let app = session.app { return "Awake while \(app.name) is open" }
             return "Awake until you stop"
         }
+        if let end = state.endsAt { return "Awake · \(AwakePlanner.remaining(end.timeIntervalSince(now))) left" }
         return "Awake automatically"
     }
 
@@ -129,7 +134,8 @@ struct AwakeTab: View {
         case .manual(let session):
             if let end = session.endsAt { return "Until \(AwakePlanner.untilLabel(end, now: now)) · \(display)" }
             return display.prefix(1).uppercased() + display.dropFirst()
-        case .trigger(let reason):
+        case .trigger(let reason, let end):
+            if let end { return "\(reason) until \(AwakePlanner.untilLabel(end, now: now)) · \(display)" }
             return "\(reason) · \(display)"
         }
     }
@@ -430,7 +436,7 @@ struct AwakeTab: View {
         let t = awake.triggers
         guard t.anyConfigured else { return "Off" }
         if !t.enabled { return "Paused" }
-        if case .trigger(let reason) = engine.state?.source { return reason }
+        if case .trigger(let reason, _) = engine.state?.source { return reason }
         return t.ruleCount == 1 ? "1 rule" : "\(t.ruleCount) rules"
     }
 
