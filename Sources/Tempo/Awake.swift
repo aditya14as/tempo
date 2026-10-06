@@ -44,6 +44,28 @@ enum AwakePlanner {
         return day.slots.contains { minute >= $0.startMinute && minute < $0.endMinute }
     }
 
+    /// When the work slot `now` falls in ends, running on through slots that
+    /// touch or overlap it; nil outside work hours.
+    static func workSlotEnd(_ now: Date, schedule: WorkSchedule, cal: Calendar = .current) -> Date? {
+        let day = schedule.day(cal.component(.weekday, from: now))
+        guard day.enabled else { return nil }
+        let c = cal.dateComponents([.hour, .minute], from: now)
+        let minute = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+        guard var end = day.slots.first(where: { minute >= $0.startMinute && minute < $0.endMinute })?.endMinute
+        else { return nil }
+        var extended = true
+        while extended {
+            extended = false
+            for slot in day.slots where slot.startMinute <= end && slot.endMinute > end {
+                end = slot.endMinute
+                extended = true
+            }
+        }
+        return cal.date(byAdding: .minute, value: end, to: cal.startOfDay(for: now))
+    }
+
+    static let workHoursReason = "Work hours"
+
     /// The first satisfied trigger, as a human reason ("External display"), or nil.
     static func triggerReason(
         _ triggers: AwakeTriggers, env: AwakeEnvironment, now: Date, schedule: WorkSchedule,
@@ -59,8 +81,16 @@ enum AwakePlanner {
         if let ssid = env.wifiSSID, triggers.wifiNetworks.contains(ssid) { return "On \(ssid) Wi-Fi" }
         if triggers.externalDisplay && env.externalDisplay { return "External display connected" }
         if triggers.onPower && env.hasBattery && env.onAC { return "Plugged in" }
-        if triggers.workHours && inWorkHours(now, schedule: schedule, cal: cal) { return "Work hours" }
+        if triggers.workHours && inWorkHours(now, schedule: schedule, cal: cal) { return workHoursReason }
         return nil
+    }
+
+    /// When the trigger behind `reason` lets go by itself: the end of the
+    /// work slot for work hours, nil (indefinite) for every other trigger.
+    static func triggerEnd(
+        reason: String, now: Date, schedule: WorkSchedule, cal: Calendar = .current
+    ) -> Date? {
+        reason == workHoursReason ? workSlotEnd(now, schedule: schedule, cal: cal) : nil
     }
 
     /// Why the battery guard forbids staying awake, or nil when it's fine.
@@ -146,7 +176,8 @@ enum AwakePlanner {
 struct AwakeState: Equatable {
     enum Source: Equatable {
         case manual(AwakeSession)
-        case trigger(String)
+        /// `endsAt` is set when the trigger ends on its own (work hours).
+        case trigger(String, endsAt: Date?)
     }
     var source: Source
     var displayOn: Bool
@@ -155,7 +186,12 @@ struct AwakeState: Equatable {
         if case .manual(let s) = source { return s }
         return nil
     }
-    var endsAt: Date? { session?.endsAt }
+    var endsAt: Date? {
+        switch source {
+        case .manual(let s): return s.endsAt
+        case .trigger(_, let end): return end
+        }
+    }
     var isTrigger: Bool {
         if case .trigger = source { return true }
         return false
@@ -424,8 +460,11 @@ final class AwakeEngine: ObservableObject {
         }
         if let reason = AwakePlanner.triggerReason(awake.triggers, env: env, now: now, schedule: store.config.schedule) {
             triggerLostAt = nil
-            apply(AwakeState(source: .trigger(reason), displayOn: !awake.allowDisplaySleep))
-        } else if let current = state, current.isTrigger, awake.triggers.enabled, !rulesChanged {
+            let end = AwakePlanner.triggerEnd(reason: reason, now: now, schedule: store.config.schedule)
+            apply(AwakeState(source: .trigger(reason, endsAt: end), displayOn: !awake.allowDisplaySleep))
+        } else if let current = state, current.isTrigger, awake.triggers.enabled, !rulesChanged,
+                  // No grace past a scheduled end (work hours over): that's no flicker.
+                  current.endsAt.map({ $0 > now }) ?? true {
             let lost = triggerLostAt ?? now
             triggerLostAt = lost
             apply(now.timeIntervalSince(lost) < Self.triggerGrace ? current : nil)

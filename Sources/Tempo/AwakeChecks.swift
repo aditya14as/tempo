@@ -49,6 +49,20 @@ enum AwakeChecks {
         work.workHours = true
         Checks.expect(AwakePlanner.triggerReason(work, env: AwakeEnvironment(), now: wed14, schedule: schedule, cal: cal)
             == "Work hours", "the work-hours trigger follows Tempo's schedule")
+        Checks.expect(AwakePlanner.triggerEnd(reason: "Work hours", now: wed14, schedule: schedule, cal: cal)
+            == at(2026, 5, 13, 18), "a work-hours session counts down to the end of the slot")
+        Checks.expect(AwakePlanner.triggerEnd(reason: "Plugged in", now: wed14, schedule: schedule, cal: cal) == nil,
+            "other triggers have no end, so no countdown")
+        var split = schedule
+        split.days[4] = DaySchedule(enabled: true, slots: [
+            WorkSlot(startMinute: 9 * 60, endMinute: 12 * 60),
+            WorkSlot(startMinute: 12 * 60, endMinute: 13 * 60),
+            WorkSlot(startMinute: 14 * 60, endMinute: 17 * 60),
+        ])
+        Checks.expect(AwakePlanner.workSlotEnd(at(2026, 5, 13, 10), schedule: split, cal: cal) == at(2026, 5, 13, 13)
+            && AwakePlanner.workSlotEnd(at(2026, 5, 13, 15), schedule: split, cal: cal) == at(2026, 5, 13, 17)
+            && AwakePlanner.workSlotEnd(at(2026, 5, 13, 13, 30), schedule: split, cal: cal) == nil,
+            "back-to-back slots count down as one; a gap ends the countdown")
 
         var config = AwakeConfig()
         let onBattery = AwakeEnvironment(onAC: false, hasBattery: true, batteryPercent: 12)
