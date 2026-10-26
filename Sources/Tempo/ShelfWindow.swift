@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -180,6 +181,7 @@ final class ShelfWindow {
         let busy = dragActive
             || DropGlow.shared.targeted
             || panel.frame.insetBy(dx: -20, dy: -20).contains(NSEvent.mouseLocation)
+            || ShelfQuickLook.shared.isOpen
         if busy {
             idleTicks = 0
             return
@@ -194,6 +196,7 @@ final class ShelfWindow {
     /// The resting state: ordered-in (so it can catch the next drag) but
     /// parked off-screen, invisible and click-through.
     private func goIdle() {
+        ShelfQuickLook.shared.dismiss()
         guard let panel else { return }
         open = false
         revealedByDrag = false
@@ -334,6 +337,21 @@ final class ShelfPanel: NSPanel {
     /// click that only makes the card key never reaches its buttons.
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        ShelfQuickLook.shared.currentURL != nil
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = ShelfQuickLook.shared
+        panel.delegate = ShelfQuickLook.shared
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+        ShelfQuickLook.shared.handlePanelDidClose()
+    }
 }
 
 /// Acts on the first click, even though the card is never key.
@@ -426,10 +444,13 @@ struct ShelfView: View {
                 }
                 Spacer()
                 if !store.config.shelf.isEmpty {
-                    Button("Clear") { store.config.shelf.removeAll() }
-                        .buttonStyle(.plain)
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.secondary)
+                    Button("Clear") {
+                        ShelfQuickLook.shared.dismiss()
+                        store.config.shelf.removeAll()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
                 }
             }
             if store.config.shelf.isEmpty {
@@ -508,7 +529,10 @@ struct ShelfView: View {
                 .fill(Color.primary.opacity(0.05))
         )
         .overlay(alignment: .topTrailing) {
-            Button { store.config.shelf.removeAll { $0.id == item.id } } label: {
+            Button {
+                if let url = item.url { ShelfQuickLook.shared.dismissIfShowing(url: url) }
+                store.config.shelf.removeAll { $0.id == item.id }
+            } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.quaternary)
@@ -517,7 +541,25 @@ struct ShelfView: View {
             .padding(3)
         }
         .onTapGesture {
-            if let url = item.url { NSWorkspace.shared.open(url) }
+            if let url = item.url { ShelfQuickLook.shared.preview(url: url) }
+        }
+        .contextMenu {
+            Button("Quick Look") {
+                if let url = item.url { ShelfQuickLook.shared.preview(url: url) }
+            }
+            Button("Open") {
+                if let url = item.url { NSWorkspace.shared.open(url) }
+            }
+            if item.isFile {
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.selectFile(item.link, inFileViewerRootedAtPath: "")
+                }
+            }
+            Divider()
+            Button("Remove from Shelf") {
+                if let url = item.url { ShelfQuickLook.shared.dismissIfShowing(url: url) }
+                store.config.shelf.removeAll { $0.id == item.id }
+            }
         }
         .onDrag { dragProvider(item) }
         .help(item.link)

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import QuickLookUI
 
 /// Self-checks for the progress math, run with `Tempo --check`.
 /// Command Line Tools ship no XCTest/Testing module, so tests live here as
@@ -411,6 +412,28 @@ enum Checks {
         expect(DropPayload.urls(from: shelfPB).map(\.path) == ["/Users/me/notes.md"],
                "a Shelf item dropped back resolves to its original path")
         shelfPB.releaseGlobally()
+
+        // Shelf Quick Look preview coordinator: sets, provides, and dismisses preview items.
+        MainActor.assumeIsolated {
+            let ql = ShelfQuickLook.shared
+            let sampleA = URL(fileURLWithPath: "/tmp/sampleA.txt")
+            let sampleB = URL(fileURLWithPath: "/tmp/sampleB.txt")
+            ql.preview(url: sampleA)
+            expect(ql.currentURL == sampleA, "ShelfQuickLook sets currentURL on preview")
+            expect(ql.numberOfPreviewItems(in: nil) == 1, "ShelfQuickLook reports 1 preview item when url is set")
+            let item = ql.previewPanel(nil, previewItemAt: 0)
+            expect(item?.previewItemURL == sampleA, "ShelfQuickLook provides the requested preview item")
+
+            ql.preview(url: sampleB)
+            expect(ql.currentURL == sampleB, "ShelfQuickLook updates currentURL to new item")
+
+            ql.dismissIfShowing(url: sampleA)
+            expect(ql.currentURL == sampleB, "ShelfQuickLook dismissIfShowing ignores non-matching url")
+
+            ql.dismissIfShowing(url: sampleB)
+            expect(ql.currentURL == nil, "ShelfQuickLook dismissIfShowing clears matching url")
+            expect(ql.numberOfPreviewItems(in: nil) == 0, "ShelfQuickLook reports 0 items when cleared")
+        }
 
         // Builds the little-endian blob Chromium uses for drag data:
         // payload size, entry count, then UTF-16 key/value pairs padded

@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -35,6 +36,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AwakeEngine.shared.start(store: store)
         SwitcherController.shared.start(store: store)
         ClipboardController.shared.start(store: store)
+    }
+
+    // MARK: - Quick Look Panel Control
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated {
+            ShelfQuickLook.shared.currentURL != nil
+        }
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            panel.dataSource = ShelfQuickLook.shared
+            panel.delegate = ShelfQuickLook.shared
+        }
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+        MainActor.assumeIsolated {
+            ShelfQuickLook.shared.handlePanelDidClose()
+        }
     }
 }
 
