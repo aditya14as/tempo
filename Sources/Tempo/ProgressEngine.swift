@@ -146,11 +146,14 @@ enum ProgressEngine {
 
         switch mode {
         case .workHours:
+            let tally = workTally(now: now, from: interval.start, to: interval.end, schedule: schedule, cal: cal)
+            guard tally.total > 0 else {
+                return MetricSnapshot(fraction: nil, subtitle: "No workdays")
+            }
             if metric == .week {
                 if frac >= 1 {
                     return MetricSnapshot(fraction: 1, subtitle: "Week done — enjoy!")
                 }
-                let tally = workTally(now: now, from: interval.start, to: interval.end, schedule: schedule, cal: cal)
                 return MetricSnapshot(fraction: frac, subtitle: "\(hm(tally.total - tally.done)) of work left")
             }
             let daysLeft = remainingWorkdays(now: now, until: interval.end, schedule: schedule, cal: cal)

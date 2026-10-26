@@ -8,19 +8,21 @@ struct MenuBarLabel: View {
 
     var body: some View {
         let config = store.config
+        let shown = shownMetrics(config)
         if let state = awake.state, config.features.awake {
             // Awake: a bolt (plus optional time left) leads the usual item.
-            // Without work-hours progress the bolt stands in for the icon.
-            let progress = config.features.workHours
+            // With no progress to show the bolt stands in for the icon.
             Image(nsImage: MenuBarAwake.compose(
                 awakeText: awakeText(state, config: config),
-                base: progress ? baseImage(config) : nil,
-                text: progress ? baseText(config) : nil
+                base: shown.isEmpty ? nil : baseImage(shown, config: config),
+                text: baseText(shown, config: config)
             ))
-        } else if let image = baseImage(config) {
+        } else if shown.isEmpty {
+            Self.appIcon.map(Image.init(nsImage:))
+        } else if let image = baseImage(shown, config: config) {
             Image(nsImage: image)
         } else {
-            Text(baseText(config) ?? "")
+            Text(baseText(shown, config: config) ?? "")
                 .monospacedDigit()
         }
     }
@@ -30,27 +32,31 @@ struct MenuBarLabel: View {
         return AwakePlanner.menuBarRemaining(end.timeIntervalSince(Date()))
     }
 
+    /// The metrics to show, minus any with nothing to count right now (Today
+    /// on a day off, Week with no workdays): a bare "—" in the menu bar reads
+    /// as broken. Empty means show just the Tempo icon.
+    private func shownMetrics(_ config: AppConfig) -> [(metric: Metric, fraction: Double)] {
+        guard config.features.workHours else { return [] }
+        let metrics = config.menuBarShows.metric.map { [$0] } ?? [.today, .week]
+        return metrics.compactMap { metric in
+            ProgressEngine.snapshot(metric, now: ticker.now, config: config).fraction.map { (metric, $0) }
+        }
+    }
+
     /// The item as an image, or nil for the plain-text style.
-    private func baseImage(_ config: AppConfig) -> NSImage? {
-        guard config.features.workHours else { return Self.appIcon }
+    private func baseImage(_ shown: [(metric: Metric, fraction: Double)], config: AppConfig) -> NSImage? {
         if config.menuBarShows == .todayWeek {
             // Today + week side by side: letter badge + percent + mini progress bar.
-            let today = ProgressEngine.snapshot(.today, now: ticker.now, config: config)
-            let week = ProgressEngine.snapshot(.week, now: ticker.now, config: config)
-            return MenuBarBadges.image(segments: [
-                ("T", today.fraction),
-                ("W", week.fraction),
-            ])
+            return MenuBarBadges.image(segments: shown.map { ($0.metric.shortLetter, $0.fraction) })
         }
-        let metric = config.menuBarShows.metric ?? .week
-        let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
+        guard let first = shown.first else { return Self.appIcon }
         switch config.menuBarStyle {
         case .text:
             return nil
         case .icon:
             return Self.appIcon
         case .ring:
-            return MenuBarRing.image(fraction: snapshot.fraction ?? 0, letter: metric.shortLetter)
+            return MenuBarRing.image(fraction: first.fraction, letter: first.metric.shortLetter)
         }
     }
 
@@ -60,11 +66,9 @@ struct MenuBarLabel: View {
         return image
     }()
 
-    private func baseText(_ config: AppConfig) -> String? {
-        guard config.features.workHours, config.menuBarShows != .todayWeek, config.menuBarStyle == .text else { return nil }
-        let metric = config.menuBarShows.metric ?? .week
-        let snapshot = ProgressEngine.snapshot(metric, now: ticker.now, config: config)
-        return "\(metric.shortLetter) \(ProgressEngine.percentText(snapshot.fraction))"
+    private func baseText(_ shown: [(metric: Metric, fraction: Double)], config: AppConfig) -> String? {
+        guard config.menuBarShows != .todayWeek, config.menuBarStyle == .text, let first = shown.first else { return nil }
+        return "\(first.metric.shortLetter) \(ProgressEngine.percentText(first.fraction))"
     }
 }
 

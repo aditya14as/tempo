@@ -122,6 +122,16 @@ enum Checks {
             ProgressEngine.rangeProgress(metric: .week, mode: .workHours, now: wednesday14, schedule: empty, cal: cal),
             0, "zero-length work window does not divide by zero"
         )
+        var emptyConfig = AppConfig()
+        emptyConfig.schedule = empty
+        expect(
+            ProgressEngine.snapshot(.week, now: wednesday14, config: emptyConfig, cal: cal).fraction == nil,
+            "week with no work hours has nothing to count"
+        )
+        expect(
+            ProgressEngine.snapshot(.today, now: weekDate(dayOffset: 5, hour: 12), config: AppConfig(), cal: cal).fraction == nil,
+            "Saturday today snapshot has nothing to count"
+        )
 
         let snap = ProgressEngine.snapshot(.today, now: weekDate(dayOffset: 2, hour: 14, minute: 40), config: AppConfig(), cal: cal)
         expect(snap.subtitle == "3h 20m left", "today subtitle formats time left (got \"\(snap.subtitle)\")")
