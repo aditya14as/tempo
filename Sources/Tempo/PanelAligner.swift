@@ -48,10 +48,10 @@ final class PanelAligner {
         guard window !== self.window else { return }
         self.window = window
         PanelVisibility.shared.track(window)
-        // While the content's height animates (switching tabs), SwiftUI
-        // resizes the window on every frame and each time snaps it back to its
-        // own spot, right of the icon. Put it back in the same call, before
-        // the frame is drawn, or the panel visibly jumps sideways.
+        // Whenever the content's height changes (switching tabs), SwiftUI
+        // resizes the window and snaps it back to its own spot, right of the
+        // icon. Put it back in the same call, before the frame is drawn, or
+        // the panel visibly jumps sideways.
         frameObservers.forEach(NotificationCenter.default.removeObserver)
         frameObservers = [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map { name in
             NotificationCenter.default.addObserver(forName: name, object: window, queue: nil) { _ in

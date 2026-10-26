@@ -52,6 +52,7 @@ struct PanelView: View {
     @ObservedObject private var visibility = PanelVisibility.shared
     @ViewState private var showSettings = false
     @ViewState private var tab: PanelTab = .now
+    @ViewState private var pill = PillSlide()
 
     var body: some View {
         Group {
@@ -139,28 +140,41 @@ struct PanelView: View {
     }
 
     private func tabBar(_ tabs: [PanelTab], current: PanelTab?) -> some View {
-        HStack(spacing: 4) {
-            ForEach(tabs) { t in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { tab = t }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: t.icon).font(.system(size: 10))
-                        Text(t.label)
+        let spacing: CGFloat = 4
+        let target = Double(current.flatMap { tabs.firstIndex(of: $0) } ?? 0)
+        return TimelineView(PillSlide.Frames(end: pill.end)) { context in
+            let position = pill.position(toward: target, at: context.date)
+            HStack(spacing: spacing) {
+                ForEach(Array(tabs.enumerated()), id: \.element) { index, t in
+                    Button {
+                        // Set off from wherever the pill is drawn now, which
+                        // is mid-slide after a quick second click.
+                        pill = PillSlide(from: pill.position(toward: target, at: Date()), start: Date())
+                        tab = t
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: t.icon).font(.system(size: 10))
+                            Text(t.label)
+                        }
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity)
+                        // White while the pill is under it.
+                        .foregroundStyle(abs(position - Double(index)) < 0.5 ? .white : .secondary)
+                        // Transparent areas don't hit-test; make the whole pill clickable.
+                        .contentShape(Capsule())
                     }
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        Capsule().fill(current == t
-                            ? AnyShapeStyle(store.config.theme.gradient)
-                            : AnyShapeStyle(Color.clear))
-                    )
-                    .foregroundStyle(current == t ? .white : .secondary)
-                    // Transparent areas don't hit-test; make the whole pill clickable.
-                    .contentShape(Capsule())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+            }
+            .background(alignment: .leading) {
+                GeometryReader { proxy in
+                    let width = (proxy.size.width - spacing * CGFloat(tabs.count - 1)) / CGFloat(tabs.count)
+                    Capsule()
+                        .fill(store.config.theme.gradient)
+                        .frame(width: width)
+                        .offset(x: position * (width + spacing))
+                }
             }
         }
         .padding(3)
@@ -650,6 +664,38 @@ struct PanelClock: TimelineSchedule {
             }
             defer { next += 1 }
             return next
+        }
+    }
+}
+
+/// The tab bar's selection pill gliding to a new tab, positioned by hand on
+/// every frame. A SwiftUI animation can't do it: switching tabs also resizes
+/// the dropdown, and the animation replays that resize as the pill (or the
+/// whole tab row) swooping in from above or below.
+struct PillSlide {
+    /// Tab position the slide started from; fractional if it began mid-slide.
+    var from: Double = 0
+    var start: Date = .distantPast
+    static let duration: TimeInterval = 0.2
+
+    var end: Date { start + Self.duration }
+
+    func position(toward target: Double, at date: Date) -> Double {
+        let t = min(max(date.timeIntervalSince(start) / Self.duration, 0), 1)
+        return from + (target - from) * t * t * (3 - 2 * t)  // ease in and out
+    }
+
+    /// Display-rate ticks until the slide ends, then none.
+    struct Frames: TimelineSchedule {
+        let end: Date
+
+        func entries(from start: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+            var next: Date? = start
+            return AnyIterator {
+                guard let date = next else { return nil }
+                next = date < end ? min(date + 1.0 / 120, end) : nil
+                return date
+            }
         }
     }
 }
