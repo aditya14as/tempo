@@ -359,6 +359,10 @@ enum Checks {
         expect(DroppedURLs.url(fromString: "   ") == nil, "blank text is not a drop")
         expect(DroppedURLs.url(fromString: "hello world") == nil, "plain words are not a drop")
         expect(
+            DroppedURLs.url(fromString: "Package.swift")?.path.hasSuffix("/Package.swift") == true,
+            "a relative path from an open workspace project resolves to its file URL"
+        )
+        expect(
             DroppedURLs.urls(fromText: "file:///tmp/a.txt\nfile:///tmp/b.txt").count == 2,
             "a two-line uri list yields two files"
         )

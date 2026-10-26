@@ -1,11 +1,137 @@
 import AppKit
+import SQLite3
 import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - Turning dropped text into URLs (pure, covered by --check)
 
+/// Discovers project workspace roots from active/recent editors (T3 Code, VS Code, Cursor, Windsurf)
+/// and the filesystem, allowing relative file paths dragged from editors to resolve to real file URLs.
+enum WorkspaceRoots {
+    private static var cachedRoots: [String] = []
+    private static var lastFetch: Date = .distantPast
+
+    /// Resolves a candidate relative path against open/recent project workspaces.
+    static func resolve(relativePath raw: String) -> URL? {
+        var rel = raw
+        if rel.hasPrefix("./") {
+            rel = String(rel.dropFirst(2))
+        }
+        guard !rel.isEmpty, !rel.contains("\0"), rel.count < 1024 else { return nil }
+
+        let roots = candidateRoots()
+        for root in roots {
+            let candidate = URL(fileURLWithPath: root).appendingPathComponent(rel)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            // If the path was dragged with the project directory name as its first segment,
+            // e.g. "tempo/Assets/icon-256.png" when root is ".../tempo"
+            let rootURL = URL(fileURLWithPath: root)
+            let rootName = rootURL.lastPathComponent
+            if rel.hasPrefix(rootName + "/") {
+                let stripped = String(rel.dropFirst(rootName.count + 1))
+                let candidateStripped = rootURL.appendingPathComponent(stripped)
+                if FileManager.default.fileExists(atPath: candidateStripped.path) {
+                    return candidateStripped
+                }
+            }
+        }
+        return nil
+    }
+
+    static func candidateRoots() -> [String] {
+        let now = Date()
+        if now.timeIntervalSince(lastFetch) < 3.0 && !cachedRoots.isEmpty {
+            return cachedRoots
+        }
+        var roots: [String] = []
+        var seen = Set<String>()
+
+        func add(_ path: String) {
+            let standard = (path as NSString).expandingTildeInPath
+            guard !seen.contains(standard), FileManager.default.fileExists(atPath: standard) else { return }
+            seen.insert(standard)
+            roots.append(standard)
+        }
+
+        // 1. T3 Code projects from its SQLite database (ordered by most recent thread/activity)
+        let t3Db = ("~/.t3/userdata/statev2.sqlite" as NSString).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: t3Db) {
+            var db: OpaquePointer?
+            if sqlite3_open_v2(t3Db, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
+                var stmt: OpaquePointer?
+                let query = """
+                SELECT p.workspace_root
+                FROM projection_projects p
+                LEFT JOIN (
+                    SELECT project_id, MAX(updated_at) as last_thread_at
+                    FROM orchestration_v2_projection_threads
+                    GROUP BY project_id
+                ) t ON p.project_id = t.project_id
+                WHERE p.deleted_at IS NULL
+                ORDER BY COALESCE(t.last_thread_at, p.updated_at) DESC;
+                """
+                if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        if let text = sqlite3_column_text(stmt, 0) {
+                            add(String(cString: text))
+                        }
+                    }
+                    sqlite3_finalize(stmt)
+                }
+                sqlite3_close(db)
+            }
+        }
+
+        // 2. VS Code / Cursor / Windsurf recent workspaceStorage
+        for appDir in ["Code", "Cursor", "Windsurf"] {
+            let wsDir = ("~/Library/Application Support/" + appDir + "/User/workspaceStorage" as NSString).expandingTildeInPath
+            if let enumerator = FileManager.default.enumerator(atPath: wsDir) {
+                var jsonFiles: [(path: String, date: Date)] = []
+                while let file = enumerator.nextObject() as? String {
+                    if file.hasSuffix("/workspace.json") || file == "workspace.json" {
+                        let full = (wsDir as NSString).appendingPathComponent(file)
+                        let attrs = try? FileManager.default.attributesOfItem(atPath: full)
+                        let modDate = (attrs?[.modificationDate] as? Date) ?? Date.distantPast
+                        jsonFiles.append((full, modDate))
+                    }
+                }
+                jsonFiles.sort { $0.date > $1.date }
+                for item in jsonFiles.prefix(10) {
+                    if let data = try? Data(contentsOf: URL(fileURLWithPath: item.path)),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let folder = json["folder"] as? String,
+                       let url = URL(string: folder), url.isFileURL {
+                        add(url.path)
+                    }
+                }
+            }
+        }
+
+        // 3. Current working directory
+        add(FileManager.default.currentDirectoryPath)
+
+        // 4. Common workspace directories and immediate subdirectories
+        for base in ["~/workspace", "~/workspace/projects", "~/Projects", "~/Developer", "~/src"] {
+            let expanded = (base as NSString).expandingTildeInPath
+            if let contents = try? FileManager.default.contentsOfDirectory(atPath: expanded) {
+                for item in contents where !item.hasPrefix(".") {
+                    add((expanded as NSString).appendingPathComponent(item))
+                }
+            }
+        }
+
+        cachedRoots = roots
+        lastFetch = now
+        return roots
+    }
+}
+
 enum DroppedURLs {
-    /// Accepts absolute paths, ~ paths, file:// and http(s) links. Rejects the rest.
+    /// Accepts absolute paths, ~ paths, file:// and http(s) links.
+    /// Also resolves relative file paths from open editor workspaces (e.g. T3 Code, VS Code file tree drags).
+    /// Rejects non-existent files or plain prose.
     static func url(fromString raw: String) -> URL? {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty else { return nil }
@@ -16,7 +142,7 @@ enum DroppedURLs {
             scheme == "http" || scheme == "https" {
             return url
         }
-        return nil
+        return WorkspaceRoots.resolve(relativePath: s)
     }
 
     /// One URL per line — the "uri-list" shape editors put on the pasteboard.
@@ -165,6 +291,7 @@ final class FileDropView: NSView {
     static let chromiumTypes: [NSPasteboard.PasteboardType] = [
         DropPayload.webCustomData,
         NSPasteboard.PasteboardType("org.chromium.chromium-initiated-drag"),
+        NSPasteboard.PasteboardType("org.chromium.chromium-privileged-initiated-drag"),
         NSPasteboard.PasteboardType("org.chromium.chromium-renderer-initiated-drag"),
         NSPasteboard.PasteboardType("org.chromium.drag-dummy-type"),
     ]
